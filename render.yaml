@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: lendsqr-wallet
+    runtime: node
+    plan: free
+    # Dev dependencies are needed to compile TypeScript, even with NODE_ENV=production.
+    buildCommand: npm ci --include=dev && npm run build
+    # Migrations and the idempotent demo seed run on every boot (pre-deploy hooks are paid-only).
+    startCommand: npm run migrate:prod && npm run seed:prod && npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: lendsqr-wallet-db
+          property: connectionString
+      # The internal connection string stays on Render's private network.
+      - key: DATABASE_SSL
+        value: 'false'
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADJUTOR_API_KEY
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+      - key: SEED_DEMO_PASSWORD
+        sync: false
+
+databases:
+  - name: lendsqr-wallet-db
+    plan: free
+    databaseName: wallet
+    user: wallet
