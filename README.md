@@ -39,6 +39,19 @@ npm run test:e2e     # end-to-end against the wallet_test database
 
 Passwords come from `SEED_ADMIN_PASSWORD` / `SEED_DEMO_PASSWORD`.
 
+## API
+
+All routes are under `/api/v1` and need `Authorization: Bearer <token>` unless marked public.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/register` | public | Blacklist check, then create the user and NGN wallet; returns a token |
+| POST | `/auth/login` | public | Email + password → bearer token |
+| GET | `/users/me` | user | Profile and wallet |
+| GET | `/health` | public | Liveness + DB check (no prefix) |
+
+Errors always look like `{ statusCode, error, message, requestId }`.
+
 ## Scripts
 
 | Script | Purpose |
@@ -70,4 +83,33 @@ On boot the service runs migrations, the idempotent seed, then starts. Set
 - **Blocking takes effect immediately:** the auth guard re-reads the user on each request,
   so a blocked user's existing token stops working.
 
-_Concurrency control, idempotency and blacklist handling are documented here as they are implemented._
+### Onboarding and the blacklist
+
+- **User and wallet are created in one transaction**, so a user never exists without a wallet.
+- **Two blacklist sources**, checked before anything is written:
+  1. a local `blacklist` table (admin-managed, free, no network), then
+  2. Lendsqr **Adjutor Karma** (`GET /v2/verification/karma/:identity`) for the email and
+     phone number, in parallel.
+- **A Karma record counts as a hit only if its `karma_identity` matches the identity we
+  queried** (after normalisation). Test-mode Adjutor apps return the same mock record for
+  every lookup, and a mismatched record must never block a real customer. A `404` means
+  not listed.
+- **Fail closed:** if Karma times out (3s), errors or returns garbage, signup is refused
+  with `503`. For a lender, onboarding an unchecked identity is worse than asking someone
+  to retry. `KARMA_FAIL_OPEN=true` flips this. Without `ADJUTOR_API_KEY`, only the local
+  list applies (a warning is logged at boot).
+- **Identities are normalised** before storage and comparison: emails are lower-cased,
+  Nigerian phone numbers in any common format (`0803…`, `234803…`, `+234 803…`) become
+  `+234803…`. This makes uniqueness and blacklist matching format-proof.
+
+### Authentication
+
+- Passwords are hashed with **argon2id**.
+- Login returns the **same 401** for an unknown email and a wrong password, and runs a
+  hash verification in both cases so response time doesn't reveal which emails exist.
+  "Account is blocked" (403) is only shown after the password is verified.
+- Auth endpoints have a tighter rate limit (10/min per IP) than the global default.
+- Duplicate sign-ups are caught by the database's unique constraints, so even two
+  simultaneous identical requests produce exactly one account (and a 409).
+
+_Concurrency control and idempotency for money movement are documented here as they are implemented._

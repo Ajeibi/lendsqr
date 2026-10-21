@@ -11,6 +11,6 @@ export function applyTestEnv(): void {
   process.env.DATABASE_URL = TEST_DATABASE_URL;
   process.env.DATABASE_SSL = 'false';
   process.env.JWT_SECRET = 'test-secret-that-is-at-least-32-characters-long';
+  // Karma is exercised by unit tests with a stubbed fetch, never live from e2e.
   process.env.ADJUTOR_API_KEY = '';
-  process.env.THROTTLE_LIMIT = '10000';
 }

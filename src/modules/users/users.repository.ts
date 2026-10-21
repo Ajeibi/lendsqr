@@ -16,9 +16,30 @@ export interface UserRow {
   updated_at: Date;
 }
 
+export interface NewUser {
+  email: string;
+  phoneNumber: string;
+  firstName: string;
+  lastName: string;
+  passwordHash: string;
+}
+
 @Injectable()
 export class UsersRepository {
   constructor(@InjectKnex() private readonly db: Knex) {}
+
+  async create(user: NewUser, trx: Knex = this.db): Promise<UserRow> {
+    const [row] = await trx<UserRow>('users')
+      .insert({
+        email: user.email,
+        phone_number: user.phoneNumber,
+        first_name: user.firstName,
+        last_name: user.lastName,
+        password_hash: user.passwordHash,
+      })
+      .returning('*');
+    return row;
+  }
 
   findById(id: string, trx: Knex = this.db): Promise<UserRow | undefined> {
     return trx<UserRow>('users').where({ id }).first();

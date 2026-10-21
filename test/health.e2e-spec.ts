@@ -1,42 +1,24 @@
-import { INestApplication } from '@nestjs/common';
-import { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
-import { Knex } from 'knex';
-import request from 'supertest';
-import { App } from 'supertest/types';
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/app.setup';
-import { KNEX } from '../src/database/database.module';
+import { createTestApp, TestContext } from './utils';
 
 describe('Health & schema (e2e)', () => {
-  let app: INestApplication<App>;
-  let db: Knex;
+  let ctx: TestContext;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    const nestApp = moduleRef.createNestApplication<NestExpressApplication>();
-    configureApp(nestApp);
-    await nestApp.init();
-    app = nestApp;
-    db = moduleRef.get<Knex>(KNEX);
+    ctx = await createTestApp();
   });
 
   afterAll(async () => {
-    await app.close();
+    await ctx.app.close();
   });
 
   it('GET /health reports the database as up', async () => {
-    const res = await request(app.getHttpServer()).get('/health').expect(200);
+    const res = await ctx.http().get('/health').expect(200);
     expect(res.body).toEqual({ status: 'ok', database: 'up' });
     expect(res.headers['x-request-id']).toBeDefined();
   });
 
   it('returns the shared error shape for unknown routes', async () => {
-    const res = await request(app.getHttpServer())
-      .get('/api/v1/does-not-exist')
-      .expect(404);
+    const res = await ctx.http().get('/api/v1/does-not-exist').expect(404);
     expect(res.body).toMatchObject({
       statusCode: 404,
       error: 'Not Found',
@@ -45,7 +27,7 @@ describe('Health & schema (e2e)', () => {
   });
 
   it('database refuses a negative wallet balance', async () => {
-    const trx = await db.transaction();
+    const trx = await ctx.db.transaction();
     try {
       const [{ id: userId }] = await trx('users')
         .insert({

@@ -46,7 +46,11 @@ import { UsersModule } from './modules/users/users.module';
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => {
         const { ttlMs, limit } = config.get('throttle', { infer: true });
-        return [{ ttl: ttlMs, limit }];
+        return {
+          throttlers: [{ ttl: ttlMs, limit }],
+          // The e2e suite fires many requests from one IP on purpose.
+          skipIf: () => config.get('nodeEnv') === 'test',
+        };
       },
     }),
     DatabaseModule,
