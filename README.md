@@ -29,6 +29,29 @@ npm test             # unit tests
 npm run test:e2e     # end-to-end against the wallet_test database
 ```
 
+### Postman walkthrough
+
+[`postman/lendsqr-wallet.postman_collection.json`](postman/lendsqr-wallet.postman_collection.json)
+walks through every feature in order (33 requests, each with an automatic check): health,
+signup and login, idempotent funding and replay, transfers and their failure cases,
+statements from both sides, block/unblock with audit history, and the blacklist.
+
+1. Postman → **Import** → select the file.
+2. On the collection's **Variables** tab set `baseUrl` (`http://localhost:3000`, or the live
+   URL) and `demoPassword` / `adminPassword` (the seed passwords).
+3. Run it with the collection **Runner**, or click through request by request. Tokens, ids
+   and `Idempotency-Key`s are captured automatically.
+
+From the command line:
+
+```bash
+npx newman run postman/lendsqr-wallet.postman_collection.json --env-var baseUrl=http://localhost:3000 --env-var demoPassword=... --env-var adminPassword=...
+```
+
+> Signups call Adjutor Karma, which allows 9 lookups per minute in test mode. If you re-run
+> the collection back-to-back you may hit that limit and see the documented `503`; wait a
+> minute and run again.
+
 ### Demo accounts (seeded)
 
 | Email | Role | Opening balance |
@@ -121,6 +144,11 @@ On boot the service runs migrations, the idempotent seed, then starts. Set
   smoother: if you ever see that 503, it's this rule working, and retrying shortly will
   succeed. `KARMA_FAIL_OPEN=true` flips the behaviour. Without `ADJUTOR_API_KEY`, only the
   local list applies (a warning is logged at boot).
+- **Karma calls are spent carefully:** they're rate-limited (9/minute for a test-mode app;
+  each signup makes two, for email and phone) and billed per call in live mode. So invalid
+  input (`400`) and duplicate email or phone (`409`) are rejected **before** Karma is called,
+  and the local list short-circuits it too. Concurrent duplicates that slip past the
+  pre-check are still caught by the database's unique constraints.
 - **Seeing a refusal in action:** Adjutor test mode can't produce a genuine Karma match, so
   use the local list. Log in as the seeded admin, `POST /admin/blacklist`
   `{ "identityType": "EMAIL", "identity": "someone@example.com", "reason": "demo" }`, then
@@ -238,3 +266,14 @@ can't be probed.
 
 > Funding is simulated: in production the credit would come from a payment provider's
 > verified webhook, using the provider's reference as the idempotency key.
+
+## What I'd do with more time
+
+Deliberately left out to keep the scope to the brief:
+
+- **Password change and reset:** an authenticated change-password endpoint (current
+  password required), and "forgot password" via emailed single-use, expiring reset tokens.
+  Today a password is set once at signup.
+- **Refresh tokens:** access tokens currently last 1 hour with no refresh flow.
+- **Idempotency-key cleanup:** expired keys are ignored and reused correctly, but nothing
+  purges them yet; a scheduled job would.

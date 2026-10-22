@@ -1,0 +1,1218 @@
+{
+  "info": {
+    "name": "Lendsqr Wallet Service",
+    "description": "End-to-end walkthrough of the Lendsqr wallet service: accounts and wallets, idempotent funding, concurrency-safe transfers, statements, blacklist and block/unblock.\n\n## Setup\nOn this collection's **Variables** tab set:\n- `baseUrl`: `http://localhost:3100` locally, or the live Render URL\n- `demoPassword` / `adminPassword`: the `SEED_DEMO_PASSWORD` / `SEED_ADMIN_PASSWORD` values\n\nThen use **Run collection** (all 33 requests, each with an automatic check), or click through in order. Tokens, ids and `Idempotency-Key`s are captured automatically.\n\n## Conventions\n- **Auth:** `Authorization: Bearer <token>` on everything except health, login and register.\n- **Money:** integers in **kobo** (100 = NGN 1). Strings and decimals are rejected.\n- **Idempotency:** `POST /wallets/fund` and `POST /transfers` require an `Idempotency-Key` header. Retrying with the same key replays the original response (`Idempotent-Replayed: true`) and never moves money twice.\n- **Errors:** always `{ statusCode, error, message, requestId }`; quote the `requestId` when reporting a problem.\n- **Karma:** signups call Adjutor Karma, limited to 9 lookups per minute in test mode. Leave a minute between full runs.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3100"
+    },
+    {
+      "key": "demoPassword",
+      "value": ""
+    },
+    {
+      "key": "adminPassword",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Health",
+      "description": "Service and database are up.",
+      "item": [
+        {
+          "name": "Health check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 and database up', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.eql({ status: 'ok', database: 'up' });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "description": "Confirms the service and its database are up.\n\n---\n### GET /health\nLiveness and database check. **Public**, not rate-limited, and outside the `/api/v1` prefix. Render uses it as the service health check.\n\n**Responses**\n| Status | Body |\n|---|---|\n| 200 | `{ \"status\": \"ok\", \"database\": \"up\" }` |\n| 503 | Database unreachable |"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Auth",
+      "description": "Log in the seeded users and onboard a brand-new one (live blacklist + Karma check).",
+      "item": [
+        {
+          "name": "Login as Ada (demo user)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with a bearer token', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().tokenType).to.eql('Bearer');",
+                  "});",
+                  "pm.collectionVariables.set('adaToken', pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"ada@demo.wallet\",\n  \"password\": \"{{demoPassword}}\"\n}"
+            },
+            "description": "Logs in the seeded user **Ada** (opening balance NGN 10,000) and saves her token as `adaToken`.\n\n---\n### POST /api/v1/auth/login\nExchange email and password for a bearer token. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email; case-insensitive |\n| `password` | string | Required |\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 200 | `{ accessToken, tokenType: \"Bearer\", expiresIn: \"1h\" }` |\n| 400 | Validation failed |\n| 401 | `Invalid email or password`: identical for an unknown email and a wrong password, so emails can't be enumerated |\n| 403 | `Account is blocked` (only shown after the password is verified) |\n\nSend the token as `Authorization: Bearer <accessToken>`. It expires after `JWT_EXPIRES_IN` (default 1h); log in again to get a new one."
+          }
+        },
+        {
+          "name": "Login as Tunde (demo user)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with a bearer token', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().tokenType).to.eql('Bearer');",
+                  "});",
+                  "pm.collectionVariables.set('tundeToken', pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"tunde@demo.wallet\",\n  \"password\": \"{{demoPassword}}\"\n}"
+            },
+            "description": "Logs in the seeded user **Tunde** (opening balance NGN 5,000) and saves his token as `tundeToken`.\n\n---\n### POST /api/v1/auth/login\nExchange email and password for a bearer token. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email; case-insensitive |\n| `password` | string | Required |\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 200 | `{ accessToken, tokenType: \"Bearer\", expiresIn: \"1h\" }` |\n| 400 | Validation failed |\n| 401 | `Invalid email or password`: identical for an unknown email and a wrong password, so emails can't be enumerated |\n| 403 | `Account is blocked` (only shown after the password is verified) |\n\nSend the token as `Authorization: Bearer <accessToken>`. It expires after `JWT_EXPIRES_IN` (default 1h); log in again to get a new one."
+          }
+        },
+        {
+          "name": "Login as Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with a bearer token', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().tokenType).to.eql('Bearer');",
+                  "});",
+                  "pm.collectionVariables.set('adminToken', pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@demo.wallet\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "description": "Logs in the seeded **admin** and saves the token as `adminToken` for the admin folders.\n\n---\n### POST /api/v1/auth/login\nExchange email and password for a bearer token. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email; case-insensitive |\n| `password` | string | Required |\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 200 | `{ accessToken, tokenType: \"Bearer\", expiresIn: \"1h\" }` |\n| 400 | Validation failed |\n| 401 | `Invalid email or password`: identical for an unknown email and a wrong password, so emails can't be enumerated |\n| 403 | `Account is blocked` (only shown after the password is verified) |\n\nSend the token as `Authorization: Bearer <accessToken>`. It expires after `JWT_EXPIRES_IN` (default 1h); log in again to get a new one."
+          }
+        },
+        {
+          "name": "Register a new user (creates wallet)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('newEmail', `postman${Date.now()}@example.com`);",
+                  "pm.collectionVariables.set('newPhone', '0803' + Math.floor(1000000 + Math.random() * 9000000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with user, empty NGN wallet and token', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.wallet).to.include({ currency: 'NGN', balance: 0 });",
+                  "  pm.expect(b.user.phoneNumber).to.match(/^\\+234/);",
+                  "  pm.expect(JSON.stringify(b)).to.not.match(/password/i);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{newEmail}}\",\n  \"phoneNumber\": \"{{newPhone}}\",\n  \"firstName\": \"Postman\",\n  \"lastName\": \"Tester\",\n  \"password\": \"Passw0rd1\"\n}"
+            },
+            "description": "Onboards a brand-new user with a random email and phone. Passes the local blacklist and the **live Adjutor Karma** check, then gets an empty NGN wallet and a token.\n\n---\n### POST /api/v1/auth/register\nCreate a user **and their NGN wallet** in one database transaction. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email, max 255; stored lower-cased |\n| `phoneNumber` | string | Nigerian mobile in any common format (`0803…`, `234803…`, `+234 803…`); stored as `+234803…` |\n| `firstName`, `lastName` | string | Non-empty after trimming, max 100 |\n| `password` | string | 8–128 characters with at least one letter and one digit |\n\nUnknown fields (e.g. `role`) are rejected.\n\n**Order of checks**\n1. Validation → `400`\n2. Email or phone already registered → `409` (before any Karma call)\n3. Local blacklist → `403`\n4. Lendsqr Adjutor **Karma** blacklist for email and phone → `403` on a genuine match\n5. Create user + wallet → `201`\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ user, wallet: { id, currency, balance: 0 }, auth: { accessToken, tokenType, expiresIn } }` |\n| 400 | Validation failed: every problem is listed in `message` |\n| 403 | `Account cannot be created: identity is blacklisted` |\n| 409 | `Email is already registered` / `Phone number is already registered` |\n| 503 | Karma unreachable or rate-limited: onboarding **fails closed** by design; retry shortly |"
+          }
+        },
+        {
+          "name": "Register the same email again (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Email is already registered', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().message).to.eql('Email is already registered');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{newEmail}}\",\n  \"phoneNumber\": \"08099999999\",\n  \"firstName\": \"Dup\",\n  \"lastName\": \"User\",\n  \"password\": \"Passw0rd1\"\n}"
+            },
+            "description": "Re-uses the email just registered. Rejected with **409 before Karma is called**, so no rate-limited, billable lookup is wasted.\n\n---\n### POST /api/v1/auth/register\nCreate a user **and their NGN wallet** in one database transaction. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email, max 255; stored lower-cased |\n| `phoneNumber` | string | Nigerian mobile in any common format (`0803…`, `234803…`, `+234 803…`); stored as `+234803…` |\n| `firstName`, `lastName` | string | Non-empty after trimming, max 100 |\n| `password` | string | 8–128 characters with at least one letter and one digit |\n\nUnknown fields (e.g. `role`) are rejected.\n\n**Order of checks**\n1. Validation → `400`\n2. Email or phone already registered → `409` (before any Karma call)\n3. Local blacklist → `403`\n4. Lendsqr Adjutor **Karma** blacklist for email and phone → `403` on a genuine match\n5. Create user + wallet → `201`\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ user, wallet: { id, currency, balance: 0 }, auth: { accessToken, tokenType, expiresIn } }` |\n| 400 | Validation failed: every problem is listed in `message` |\n| 403 | `Account cannot be created: identity is blacklisted` |\n| 409 | `Email is already registered` / `Phone number is already registered` |\n| 503 | Karma unreachable or rate-limited: onboarding **fails closed** by design; retry shortly |"
+          }
+        },
+        {
+          "name": "Register with invalid data (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 listing every problem, incl. the injected role field', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().message).to.include('property role should not exist');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"not-an-email\",\n  \"phoneNumber\": \"123\",\n  \"firstName\": \"\",\n  \"lastName\": \"X\",\n  \"password\": \"weak\",\n  \"role\": \"ADMIN\"\n}"
+            },
+            "description": "Sends bad values plus an injected `role: \"ADMIN\"` field. Every problem is reported at once, and the extra field is refused: no privilege escalation through the body.\n\n---\n### POST /api/v1/auth/register\nCreate a user **and their NGN wallet** in one database transaction. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email, max 255; stored lower-cased |\n| `phoneNumber` | string | Nigerian mobile in any common format (`0803…`, `234803…`, `+234 803…`); stored as `+234803…` |\n| `firstName`, `lastName` | string | Non-empty after trimming, max 100 |\n| `password` | string | 8–128 characters with at least one letter and one digit |\n\nUnknown fields (e.g. `role`) are rejected.\n\n**Order of checks**\n1. Validation → `400`\n2. Email or phone already registered → `409` (before any Karma call)\n3. Local blacklist → `403`\n4. Lendsqr Adjutor **Karma** blacklist for email and phone → `403` on a genuine match\n5. Create user + wallet → `201`\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ user, wallet: { id, currency, balance: 0 }, auth: { accessToken, tokenType, expiresIn } }` |\n| 400 | Validation failed: every problem is listed in `message` |\n| 403 | `Account cannot be created: identity is blacklisted` |\n| 409 | `Email is already registered` / `Phone number is already registered` |\n| 503 | Karma unreachable or rate-limited: onboarding **fails closed** by design; retry shortly |"
+          }
+        },
+        {
+          "name": "Wrong password (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Invalid email or password', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"ada@demo.wallet\",\n  \"password\": \"Wr0ngPassword\"\n}"
+            },
+            "description": "A wrong password gets the same `401` as an unknown email, so the API never reveals which emails exist.\n\n---\n### POST /api/v1/auth/login\nExchange email and password for a bearer token. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email; case-insensitive |\n| `password` | string | Required |\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 200 | `{ accessToken, tokenType: \"Bearer\", expiresIn: \"1h\" }` |\n| 400 | Validation failed |\n| 401 | `Invalid email or password`: identical for an unknown email and a wrong password, so emails can't be enumerated |\n| 403 | `Account is blocked` (only shown after the password is verified) |\n\nSend the token as `Authorization: Bearer <accessToken>`. It expires after `JWT_EXPIRES_IN` (default 1h); log in again to get a new one."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Wallet funding",
+      "description": "Credit a wallet exactly once per Idempotency-Key.",
+      "item": [
+        {
+          "name": "Ada's wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('adaWalletId', pm.response.json().id);",
+                  "pm.collectionVariables.set('adaBalance', pm.response.json().balance);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallets/me",
+            "description": "Reads Ada's wallet and stores her current balance, so the next steps can check exact arithmetic.\n\n---\n### GET /api/v1/wallets/me\nThe signed-in user's wallet. **Bearer token required.**\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 200 | `{ id, currency: \"NGN\", balance }`: balance in **kobo** (100 = NGN 1) |\n| 401 | Missing, invalid or expired token |\n| 403 | Account is blocked |"
+          }
+        },
+        {
+          "name": "Fund NGN 2,500",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('fundKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 and balance up by exactly 250000', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const before = Number(pm.collectionVariables.get('adaBalance'));",
+                  "  pm.expect(pm.response.json().wallet.balance).to.eql(before + 250000);",
+                  "});",
+                  "pm.collectionVariables.set('fundReference', pm.response.json().transaction.reference);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{fundKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallets/fund",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 250000,\n  \"narration\": \"Postman top-up\"\n}"
+            },
+            "description": "Credits NGN 2,500 (250000 kobo) with a fresh `Idempotency-Key` (saved as `fundKey`). Checks the balance rose by exactly that amount.\n\n---\n### POST /api/v1/wallets/fund\nCredit your own wallet (a simulated deposit). **Bearer token and `Idempotency-Key` header required.**\n\n**Headers**\n| Header | Rules |\n|---|---|\n| `Idempotency-Key` | 8–255 chars of letters, digits, `_ - . :`; a UUID is ideal. One key per operation. |\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 (NGN 5M). Must be a JSON number: `\"100\"` and `10.5` are rejected. |\n| `narration` | string | Optional, max 255 |\n\n**Idempotency**\n- Same key + same body → the original response is replayed **byte-for-byte** with `Idempotent-Replayed: true`; no money moves.\n- Same key + different body → `422`.\n- A request that failed doesn't use up its key; retry with the same key.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: a `FUNDING` transaction (`FND-…`) and your updated wallet |\n| 400 | Validation failed, missing/malformed key, or amount above the limit |\n| 401 / 403 | Not authenticated / account blocked |\n| 422 | Key already used for a different request |"
+          }
+        },
+        {
+          "name": "Retry with the SAME key (replayed, no double credit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 replay of the original response', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "  pm.expect(pm.response.json().transaction.reference).to.eql(pm.collectionVariables.get('fundReference'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{fundKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallets/fund",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 250000,\n  \"narration\": \"Postman top-up\"\n}"
+            },
+            "description": "Simulates a network retry: same key, same body. The **original response is replayed** (`Idempotent-Replayed: true`, same reference) and no money moves.\n\n---\n### POST /api/v1/wallets/fund\nCredit your own wallet (a simulated deposit). **Bearer token and `Idempotency-Key` header required.**\n\n**Headers**\n| Header | Rules |\n|---|---|\n| `Idempotency-Key` | 8–255 chars of letters, digits, `_ - . :`; a UUID is ideal. One key per operation. |\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 (NGN 5M). Must be a JSON number: `\"100\"` and `10.5` are rejected. |\n| `narration` | string | Optional, max 255 |\n\n**Idempotency**\n- Same key + same body → the original response is replayed **byte-for-byte** with `Idempotent-Replayed: true`; no money moves.\n- Same key + different body → `422`.\n- A request that failed doesn't use up its key; retry with the same key.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: a `FUNDING` transaction (`FND-…`) and your updated wallet |\n| 400 | Validation failed, missing/malformed key, or amount above the limit |\n| 401 / 403 | Not authenticated / account blocked |\n| 422 | Key already used for a different request |"
+          }
+        },
+        {
+          "name": "Same key, different amount (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 key already used for a different request', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{fundKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallets/fund",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 999999,\n  \"narration\": \"Postman top-up\"\n}"
+            },
+            "description": "Re-uses the key with a different amount. Refused with **422**: a key belongs to exactly one operation.\n\n---\n### POST /api/v1/wallets/fund\nCredit your own wallet (a simulated deposit). **Bearer token and `Idempotency-Key` header required.**\n\n**Headers**\n| Header | Rules |\n|---|---|\n| `Idempotency-Key` | 8–255 chars of letters, digits, `_ - . :`; a UUID is ideal. One key per operation. |\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 (NGN 5M). Must be a JSON number: `\"100\"` and `10.5` are rejected. |\n| `narration` | string | Optional, max 255 |\n\n**Idempotency**\n- Same key + same body → the original response is replayed **byte-for-byte** with `Idempotent-Replayed: true`; no money moves.\n- Same key + different body → `422`.\n- A request that failed doesn't use up its key; retry with the same key.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: a `FUNDING` transaction (`FND-…`) and your updated wallet |\n| 400 | Validation failed, missing/malformed key, or amount above the limit |\n| 401 / 403 | Not authenticated / account blocked |\n| 422 | Key already used for a different request |"
+          }
+        },
+        {
+          "name": "No Idempotency-Key (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 header is required', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallets/fund",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100\n}"
+            },
+            "description": "Money-moving requests **must** carry an `Idempotency-Key`; without one the request is refused.\n\n---\n### POST /api/v1/wallets/fund\nCredit your own wallet (a simulated deposit). **Bearer token and `Idempotency-Key` header required.**\n\n**Headers**\n| Header | Rules |\n|---|---|\n| `Idempotency-Key` | 8–255 chars of letters, digits, `_ - . :`; a UUID is ideal. One key per operation. |\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 (NGN 5M). Must be a JSON number: `\"100\"` and `10.5` are rejected. |\n| `narration` | string | Optional, max 255 |\n\n**Idempotency**\n- Same key + same body → the original response is replayed **byte-for-byte** with `Idempotent-Replayed: true`; no money moves.\n- Same key + different body → `422`.\n- A request that failed doesn't use up its key; retry with the same key.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: a `FUNDING` transaction (`FND-…`) and your updated wallet |\n| 400 | Validation failed, missing/malformed key, or amount above the limit |\n| 401 / 403 | Not authenticated / account blocked |\n| 422 | Key already used for a different request |"
+          }
+        },
+        {
+          "name": "Balance credited exactly once",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('balance = before + 250000 (not 500000)', () => {",
+                  "  const before = Number(pm.collectionVariables.get('adaBalance'));",
+                  "  pm.expect(pm.response.json().balance).to.eql(before + 250000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallets/me",
+            "description": "After the fund + replay + misuse attempts, the balance went up by **250000 once**, not twice.\n\n---\n### GET /api/v1/wallets/me\nThe signed-in user's wallet. **Bearer token required.**\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 200 | `{ id, currency: \"NGN\", balance }`: balance in **kobo** (100 = NGN 1) |\n| 401 | Missing, invalid or expired token |\n| 403 | Account is blocked |"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Transfers",
+      "description": "Wallet A to wallet B, exactly once, never overdrawn.",
+      "item": [
+        {
+          "name": "Ada -> Tunde NGN 1,500 (by email)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('transferKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 TRANSFER, sender wallet only', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.transaction.type).to.eql('TRANSFER');",
+                  "  pm.expect(b.wallet.id).to.eql(pm.collectionVariables.get('adaWalletId'));",
+                  "});",
+                  "pm.collectionVariables.set('transferReference', pm.response.json().transaction.reference);",
+                  "pm.collectionVariables.set('tundeWalletId', pm.response.json().transaction.destinationWalletId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{transferKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientEmail\": \"tunde@demo.wallet\",\n  \"amount\": 150000,\n  \"narration\": \"Rent share\"\n}"
+            },
+            "description": "Transfers NGN 1,500 from Ada to Tunde, addressing him by email. The response contains only **Ada's** wallet. Saves the reference as `transferReference`.\n\n---\n### POST /api/v1/transfers\nSend money from your wallet to another wallet. **Bearer token and `Idempotency-Key` header required.**\n\n**Body**: give **exactly one** recipient field\n| Field | Type | Rules |\n|---|---|---|\n| `recipientWalletId` | uuid | The recipient's wallet id |\n| `recipientEmail` | string | The recipient's email (case-insensitive) |\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 |\n| `narration` | string | Optional, max 255 |\n\n**How it stays correct under load**: in one database transaction the key is claimed, **both wallets are locked in wallet-id order** (no deadlocks), statuses and balance are checked under the lock, the sender is debited and the recipient credited, and a `TRANSFER` with a DEBIT and a CREDIT ledger entry is written.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: `wallet` is the **sender's**; the recipient's balance is never exposed |\n| 400 | Validation, no/both recipient fields, transfer to yourself, amount over limit, missing/malformed key |\n| 401 | Not authenticated |\n| 403 | Your account is blocked |\n| 404 | `Recipient not found` |\n| 422 | `Insufficient funds` · `Recipient account cannot receive transfers` (blocked) · key reused for a different request |"
+          }
+        },
+        {
+          "name": "Retry the transfer with the SAME key (replayed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('replayed, same reference, money moved once', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "  pm.expect(pm.response.json().transaction.reference).to.eql(pm.collectionVariables.get('transferReference'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{transferKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientEmail\": \"tunde@demo.wallet\",\n  \"amount\": 150000,\n  \"narration\": \"Rent share\"\n}"
+            },
+            "description": "Retries the identical transfer with the same key: replayed with the same reference, and money moves **once**.\n\n---\n### POST /api/v1/transfers\nSend money from your wallet to another wallet. **Bearer token and `Idempotency-Key` header required.**\n\n**Body**: give **exactly one** recipient field\n| Field | Type | Rules |\n|---|---|---|\n| `recipientWalletId` | uuid | The recipient's wallet id |\n| `recipientEmail` | string | The recipient's email (case-insensitive) |\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 |\n| `narration` | string | Optional, max 255 |\n\n**How it stays correct under load**: in one database transaction the key is claimed, **both wallets are locked in wallet-id order** (no deadlocks), statuses and balance are checked under the lock, the sender is debited and the recipient credited, and a `TRANSFER` with a DEBIT and a CREDIT ledger entry is written.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: `wallet` is the **sender's**; the recipient's balance is never exposed |\n| 400 | Validation, no/both recipient fields, transfer to yourself, amount over limit, missing/malformed key |\n| 401 | Not authenticated |\n| 403 | Your account is blocked |\n| 404 | `Recipient not found` |\n| 422 | `Insufficient funds` · `Recipient account cannot receive transfers` (blocked) · key reused for a different request |"
+          }
+        },
+        {
+          "name": "Tunde sends more than he has (422)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Insufficient funds', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().message).to.eql('Insufficient funds');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tundeToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{tmpKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientEmail\": \"ada@demo.wallet\",\n  \"amount\": 499999999\n}"
+            },
+            "description": "Tunde tries to send far more than his balance. Refused with **422 Insufficient funds**; balances can never go negative.\n\n---\n### POST /api/v1/transfers\nSend money from your wallet to another wallet. **Bearer token and `Idempotency-Key` header required.**\n\n**Body**: give **exactly one** recipient field\n| Field | Type | Rules |\n|---|---|---|\n| `recipientWalletId` | uuid | The recipient's wallet id |\n| `recipientEmail` | string | The recipient's email (case-insensitive) |\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 |\n| `narration` | string | Optional, max 255 |\n\n**How it stays correct under load**: in one database transaction the key is claimed, **both wallets are locked in wallet-id order** (no deadlocks), statuses and balance are checked under the lock, the sender is debited and the recipient credited, and a `TRANSFER` with a DEBIT and a CREDIT ledger entry is written.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: `wallet` is the **sender's**; the recipient's balance is never exposed |\n| 400 | Validation, no/both recipient fields, transfer to yourself, amount over limit, missing/malformed key |\n| 401 | Not authenticated |\n| 403 | Your account is blocked |\n| 404 | `Recipient not found` |\n| 422 | `Insufficient funds` · `Recipient account cannot receive transfers` (blocked) · key reused for a different request |"
+          }
+        },
+        {
+          "name": "Transfer to yourself (400)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Cannot transfer to your own wallet', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{tmpKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientEmail\": \"ada@demo.wallet\",\n  \"amount\": 100\n}"
+            },
+            "description": "Ada addresses herself as recipient. Refused with **400**.\n\n---\n### POST /api/v1/transfers\nSend money from your wallet to another wallet. **Bearer token and `Idempotency-Key` header required.**\n\n**Body**: give **exactly one** recipient field\n| Field | Type | Rules |\n|---|---|---|\n| `recipientWalletId` | uuid | The recipient's wallet id |\n| `recipientEmail` | string | The recipient's email (case-insensitive) |\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 |\n| `narration` | string | Optional, max 255 |\n\n**How it stays correct under load**: in one database transaction the key is claimed, **both wallets are locked in wallet-id order** (no deadlocks), statuses and balance are checked under the lock, the sender is debited and the recipient credited, and a `TRANSFER` with a DEBIT and a CREDIT ledger entry is written.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: `wallet` is the **sender's**; the recipient's balance is never exposed |\n| 400 | Validation, no/both recipient fields, transfer to yourself, amount over limit, missing/malformed key |\n| 401 | Not authenticated |\n| 403 | Your account is blocked |\n| 404 | `Recipient not found` |\n| 422 | `Insufficient funds` · `Recipient account cannot receive transfers` (blocked) · key reused for a different request |"
+          }
+        },
+        {
+          "name": "Transfer to an unknown recipient (404)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Recipient not found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{tmpKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientEmail\": \"nobody@example.com\",\n  \"amount\": 100\n}"
+            },
+            "description": "Recipient email that has no account: **404 Recipient not found**.\n\n---\n### POST /api/v1/transfers\nSend money from your wallet to another wallet. **Bearer token and `Idempotency-Key` header required.**\n\n**Body**: give **exactly one** recipient field\n| Field | Type | Rules |\n|---|---|---|\n| `recipientWalletId` | uuid | The recipient's wallet id |\n| `recipientEmail` | string | The recipient's email (case-insensitive) |\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 |\n| `narration` | string | Optional, max 255 |\n\n**How it stays correct under load**: in one database transaction the key is claimed, **both wallets are locked in wallet-id order** (no deadlocks), statuses and balance are checked under the lock, the sender is debited and the recipient credited, and a `TRANSFER` with a DEBIT and a CREDIT ledger entry is written.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: `wallet` is the **sender's**; the recipient's balance is never exposed |\n| 400 | Validation, no/both recipient fields, transfer to yourself, amount over limit, missing/malformed key |\n| 401 | Not authenticated |\n| 403 | Your account is blocked |\n| 404 | `Recipient not found` |\n| 422 | `Insufficient funds` · `Recipient account cannot receive transfers` (blocked) · key reused for a different request |"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Transaction history",
+      "description": "Statements built from the ledger, from each side.",
+      "item": [
+        {
+          "name": "Ada's statement",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('newest line is the transfer, as a DEBIT', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const [latest] = pm.response.json().data;",
+                  "  pm.expect(latest.reference).to.eql(pm.collectionVariables.get('transferReference'));",
+                  "  pm.expect(latest.direction).to.eql('DEBIT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions?limit=5",
+            "description": "Ada's newest statement line is the transfer, shown from her side as a **DEBIT** with her balance after it.\n\n---\n### GET /api/v1/transactions\nYour wallet's statement, **newest first**. **Bearer token required.**\n\n**Query**: `page` (default 1), `limit` (default 20, max 100)\n\n**Response 200**\n```json\n{\n  \"data\": [{\n    \"reference\": \"TRF-…\", \"type\": \"TRANSFER\", \"status\": \"SUCCESS\",\n    \"amount\": 150000, \"currency\": \"NGN\",\n    \"sourceWalletId\": \"…\", \"destinationWalletId\": \"…\", \"narration\": \"…\",\n    \"direction\": \"DEBIT\", \"balanceAfter\": 1100000, \"createdAt\": \"…\"\n  }],\n  \"meta\": { \"page\": 1, \"limit\": 20, \"total\": 3 }\n}\n```\nEach line is built from **your** ledger entry, so `direction` and `balanceAfter` are from your side, like a bank statement."
+          }
+        },
+        {
+          "name": "The same transfer, seen by Tunde",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 as a CREDIT', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().direction).to.eql('CREDIT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tundeToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transactions/{{transferReference}}",
+            "description": "Tunde looks up the same reference and sees it from **his** side, as a **CREDIT**.\n\n---\n### GET /api/v1/transactions/:reference\nOne of your transactions by reference (`FND-…` / `TRF-…`). **Bearer token required.**\n\n| Status | Meaning |\n|---|---|\n| 200 | One statement line (same shape as the list) |\n| 404 | `Transaction not found`: also returned for **someone else's** transaction, so references can't be probed |"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Admin: block / unblock",
+      "description": "Account restrictions with an audit trail.",
+      "item": [
+        {
+          "name": "Non-admin tries an admin route (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users",
+            "description": "A regular user calling an admin endpoint gets **403**.\n\n---\n### GET /api/v1/admin/users\nList users, newest first. **Admin only.**\n\n**Query**: `page`, `limit` (max 100), `email` (exact match, case-insensitive)\n\n| Status | Meaning |\n|---|---|\n| 200 | `{ data: [user], meta: { page, limit, total } }` (never includes password hashes) |\n| 401 / 403 | Not authenticated / not an admin |"
+          }
+        },
+        {
+          "name": "Find Tunde",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, one user', () => pm.expect(pm.response.json().data).to.have.length(1));",
+                  "pm.collectionVariables.set('tundeId', pm.response.json().data[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users?email=tunde@demo.wallet",
+            "description": "Looks Tunde up by email and saves his id as `tundeId`.\n\n---\n### GET /api/v1/admin/users\nList users, newest first. **Admin only.**\n\n**Query**: `page`, `limit` (max 100), `email` (exact match, case-insensitive)\n\n| Status | Meaning |\n|---|---|\n| 200 | `{ data: [user], meta: { page, limit, total } }` (never includes password hashes) |\n| 401 / 403 | Not authenticated / not an admin |"
+          }
+        },
+        {
+          "name": "Block Tunde",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 BLOCKED', () => pm.expect(pm.response.json().status).to.eql('BLOCKED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{tundeId}}/block",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Postman walkthrough\"\n}"
+            },
+            "description": "Blocks Tunde with a reason, which is written to the audit trail with the acting admin.\n\n---\n### PATCH /api/v1/admin/users/:id/block\nBlock an account. **Admin only.** Body: `{ \"reason\": \"…\" }` (required, max 255).\n\nA block takes effect **immediately**: login is refused, existing tokens stop working, the user can't send or fund (`403`), and transfers to them are refused (`422`). The change and an audit event (admin, reason) are written in one transaction; the user row is locked so in-flight transfers finish first.\n\n| Status | Meaning |\n|---|---|\n| 200 | The updated user (`status: \"BLOCKED\"`) |\n| 400 | Missing reason, malformed id, or blocking yourself |\n| 404 | User not found |\n| 409 | `User is already blocked` (no duplicate audit entry) |"
+          }
+        },
+        {
+          "name": "Tunde's existing token stops working (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Account is blocked', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tundeToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallets/me",
+            "description": "The token Tunde got **before** the block is rejected immediately, because every request re-checks the account status.\n\n---\n### GET /api/v1/wallets/me\nThe signed-in user's wallet. **Bearer token required.**\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 200 | `{ id, currency: \"NGN\", balance }`: balance in **kobo** (100 = NGN 1) |\n| 401 | Missing, invalid or expired token |\n| 403 | Account is blocked |"
+          }
+        },
+        {
+          "name": "Ada pays blocked Tunde (422)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Recipient account cannot receive transfers', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adaToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{tmpKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientEmail\": \"tunde@demo.wallet\",\n  \"amount\": 100\n}"
+            },
+            "description": "A blocked account can't receive money: Ada's transfer is refused with **422** and nothing moves.\n\n---\n### POST /api/v1/transfers\nSend money from your wallet to another wallet. **Bearer token and `Idempotency-Key` header required.**\n\n**Body**: give **exactly one** recipient field\n| Field | Type | Rules |\n|---|---|---|\n| `recipientWalletId` | uuid | The recipient's wallet id |\n| `recipientEmail` | string | The recipient's email (case-insensitive) |\n| `amount` | integer | Kobo, ≥ 1, ≤ 500,000,000 |\n| `narration` | string | Optional, max 255 |\n\n**How it stays correct under load**: in one database transaction the key is claimed, **both wallets are locked in wallet-id order** (no deadlocks), statuses and balance are checked under the lock, the sender is debited and the recipient credited, and a `TRANSFER` with a DEBIT and a CREDIT ledger entry is written.\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ transaction, wallet }`: `wallet` is the **sender's**; the recipient's balance is never exposed |\n| 400 | Validation, no/both recipient fields, transfer to yourself, amount over limit, missing/malformed key |\n| 401 | Not authenticated |\n| 403 | Your account is blocked |\n| 404 | `Recipient not found` |\n| 422 | `Insufficient funds` · `Recipient account cannot receive transfers` (blocked) · key reused for a different request |"
+          }
+        },
+        {
+          "name": "Unblock Tunde",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 ACTIVE', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{tundeId}}/unblock",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Walkthrough complete\"\n}"
+            },
+            "description": "Restores Tunde's account, again with a reason.\n\n---\n### PATCH /api/v1/admin/users/:id/unblock\nRestore a blocked account. **Admin only.** Body: `{ \"reason\": \"…\" }` (required).\n\n| Status | Meaning |\n|---|---|\n| 200 | The updated user (`status: \"ACTIVE\"`) |\n| 400 / 404 | Missing reason or malformed id / user not found |\n| 409 | `User is already active` |"
+          }
+        },
+        {
+          "name": "Tunde's audit history",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('latest events: UNBLOCK then BLOCK, with the acting admin', () => {",
+                  "  const h = pm.response.json().statusHistory;",
+                  "  pm.expect(h[0].action).to.eql('UNBLOCK');",
+                  "  pm.expect(h[1].action).to.eql('BLOCK');",
+                  "  pm.expect(h[0].actorId).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{tundeId}}",
+            "description": "Shows the block and the unblock in Tunde's history (newest first), each with the acting admin and reason.\n\n---\n### GET /api/v1/admin/users/:id\nA user with their wallet and block/unblock history. **Admin only.**\n\n| Status | Meaning |\n|---|---|\n| 200 | `{ user, wallet, statusHistory: [{ action, reason, actorId, createdAt }] }`, history newest first |\n| 400 | Malformed id |\n| 404 | User not found |"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Admin: blacklist",
+      "description": "The local blacklist gates onboarding (Karma is checked too).",
+      "item": [
+        {
+          "name": "Blacklist an email",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('blockedEmail', `Fraud${Date.now()}@Example.com`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201, stored lower-cased', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().identity).to.eql(pm.collectionVariables.get('blockedEmail').toLowerCase());",
+                  "});",
+                  "pm.collectionVariables.set('blacklistId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/blacklist",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identityType\": \"EMAIL\",\n  \"identity\": \"{{blockedEmail}}\",\n  \"reason\": \"Postman walkthrough\"\n}"
+            },
+            "description": "Adds a mixed-case email to the local blacklist; it is stored lower-cased. Saves the entry id as `blacklistId`.\n\n---\n### POST /api/v1/admin/blacklist\nBlacklist an identity so it can never be onboarded. **Admin only.**\n\n**Body**\n| Field | Rules |\n|---|---|\n| `identityType` | `EMAIL`, `PHONE` or `BVN` |\n| `identity` | Valid for its type; stored **normalised** (lower-cased email, `+234…` phone, 11-digit BVN), so later matches are format-proof |\n| `reason` | Required, for the audit trail |\n\nThe blacklist gates **signup** only; restrict an existing account with block.\n\n| Status | Meaning |\n|---|---|\n| 201 | The entry, including `createdBy` (the admin) |\n| 400 | Invalid identity for its type, unknown type, missing reason |\n| 409 | `Identity is already blacklisted` (even in another format) |"
+          }
+        },
+        {
+          "name": "Sign up with the blacklisted email (403)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('newPhone', '0803' + Math.floor(1000000 + Math.random() * 9000000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 identity is blacklisted', () => {",
+                  "  pm.response.to.have.status(403);",
+                  "  pm.expect(pm.response.json().message).to.match(/blacklisted/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{blockedEmail}}\",\n  \"phoneNumber\": \"{{newPhone}}\",\n  \"firstName\": \"Bad\",\n  \"lastName\": \"Actor\",\n  \"password\": \"Passw0rd1\"\n}"
+            },
+            "description": "Signing up with the blacklisted email is refused with **403**, before Karma is even called.\n\n---\n### POST /api/v1/auth/register\nCreate a user **and their NGN wallet** in one database transaction. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email, max 255; stored lower-cased |\n| `phoneNumber` | string | Nigerian mobile in any common format (`0803…`, `234803…`, `+234 803…`); stored as `+234803…` |\n| `firstName`, `lastName` | string | Non-empty after trimming, max 100 |\n| `password` | string | 8–128 characters with at least one letter and one digit |\n\nUnknown fields (e.g. `role`) are rejected.\n\n**Order of checks**\n1. Validation → `400`\n2. Email or phone already registered → `409` (before any Karma call)\n3. Local blacklist → `403`\n4. Lendsqr Adjutor **Karma** blacklist for email and phone → `403` on a genuine match\n5. Create user + wallet → `201`\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ user, wallet: { id, currency, balance: 0 }, auth: { accessToken, tokenType, expiresIn } }` |\n| 400 | Validation failed: every problem is listed in `message` |\n| 403 | `Account cannot be created: identity is blacklisted` |\n| 409 | `Email is already registered` / `Phone number is already registered` |\n| 503 | Karma unreachable or rate-limited: onboarding **fails closed** by design; retry shortly |"
+          }
+        },
+        {
+          "name": "List blacklist entries",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with pagination meta', () => pm.expect(pm.response.json().meta.total).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/blacklist?limit=5",
+            "description": "Lists the local blacklist with pagination metadata.\n\n---\n### GET /api/v1/admin/blacklist\nLocal blacklist entries, newest first. **Admin only.** Query: `page`, `limit` (max 100).\n\n| Status | Meaning |\n|---|---|\n| 200 | `{ data: [entry], meta: { page, limit, total } }` |"
+          }
+        },
+        {
+          "name": "Remove the entry",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/blacklist/{{blacklistId}}",
+            "description": "Removes the blacklist entry.\n\n---\n### DELETE /api/v1/admin/blacklist/:id\nRemove an entry so the identity can sign up again. **Admin only.**\n\n| Status | Meaning |\n|---|---|\n| 204 | Removed |\n| 400 | Malformed id |\n| 404 | Entry not found |"
+          }
+        },
+        {
+          "name": "Sign up again: now allowed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{blockedEmail}}\",\n  \"phoneNumber\": \"{{newPhone}}\",\n  \"firstName\": \"Second\",\n  \"lastName\": \"Chance\",\n  \"password\": \"Passw0rd1\"\n}"
+            },
+            "description": "With the entry removed, the same email can now sign up (it also passes live Karma).\n\n---\n### POST /api/v1/auth/register\nCreate a user **and their NGN wallet** in one database transaction. **Public**, rate-limited to 10 requests per minute per IP.\n\n**Body**\n| Field | Type | Rules |\n|---|---|---|\n| `email` | string | Valid email, max 255; stored lower-cased |\n| `phoneNumber` | string | Nigerian mobile in any common format (`0803…`, `234803…`, `+234 803…`); stored as `+234803…` |\n| `firstName`, `lastName` | string | Non-empty after trimming, max 100 |\n| `password` | string | 8–128 characters with at least one letter and one digit |\n\nUnknown fields (e.g. `role`) are rejected.\n\n**Order of checks**\n1. Validation → `400`\n2. Email or phone already registered → `409` (before any Karma call)\n3. Local blacklist → `403`\n4. Lendsqr Adjutor **Karma** blacklist for email and phone → `403` on a genuine match\n5. Create user + wallet → `201`\n\n**Responses**\n| Status | Meaning |\n|---|---|\n| 201 | `{ user, wallet: { id, currency, balance: 0 }, auth: { accessToken, tokenType, expiresIn } }` |\n| 400 | Validation failed: every problem is listed in `message` |\n| 403 | `Account cannot be created: identity is blacklisted` |\n| 409 | `Email is already registered` / `Phone number is already registered` |\n| 503 | Karma unreachable or rate-limited: onboarding **fails closed** by design; retry shortly |"
+          }
+        }
+      ]
+    }
+  ]
+}

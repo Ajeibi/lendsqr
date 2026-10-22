@@ -49,8 +49,24 @@ export class AuthService implements OnModuleInit {
   /**
    * Blacklist-checks the identity, then creates the user and their wallet in
    * one transaction so a user can never exist without a wallet.
+   *
+   * Duplicates are rejected before the blacklist check: Karma lookups are
+   * rate-limited and billed per call, so they're spent only on sign-ups that
+   * can succeed. The unique constraints still catch concurrent duplicates.
    */
   async register(dto: RegisterDto): Promise<RegisterResponseDto> {
+    const existing = await this.users.findByEmailOrPhone(
+      dto.email,
+      dto.phoneNumber,
+    );
+    if (existing) {
+      throw new ConflictException(
+        existing.email === dto.email
+          ? DUPLICATE_MESSAGES.users_email_unique
+          : DUPLICATE_MESSAGES.users_phone_number_unique,
+      );
+    }
+
     await this.blacklist.assertEligible([
       { type: 'EMAIL', identity: dto.email },
       { type: 'PHONE', identity: dto.phoneNumber },

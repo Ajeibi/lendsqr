@@ -63,6 +63,16 @@ export class UsersRepository {
     return trx<UserRow>('users').where({ email: email.toLowerCase() }).first();
   }
 
+  findByEmailOrPhone(
+    email: string,
+    phoneNumber: string,
+  ): Promise<UserRow | undefined> {
+    return this.db<UserRow>('users')
+      .where({ email })
+      .orWhere({ phone_number: phoneNumber })
+      .first();
+  }
+
   /** Newest first, optionally narrowed to one (normalised) email. */
   async list(
     limit: number,
