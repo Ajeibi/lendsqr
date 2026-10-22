@@ -11,7 +11,10 @@ export function TopBar() {
   const { user } = profile;
   const initials = `${user.firstName[0] ?? ''}${user.lastName[0] ?? ''}`.toUpperCase();
 
-  const links = [{ href: '/wallet/', label: 'Wallet' }];
+  const links = [
+    { href: '/wallet/', label: 'Wallet' },
+    ...(user.role === 'ADMIN' ? [{ href: '/admin/', label: 'Admin' }] : []),
+  ];
 
   return (
     <header className="topbar">
