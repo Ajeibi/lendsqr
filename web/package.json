@@ -1,0 +1,30 @@
+{
+  "name": "lendsqr-wallet-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Demo client for the wallet API, exported as static files and served by the API at /app",
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build && node scripts/flatten-prefetch.mjs && node scripts/csp-hashes.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "next": "^16.4.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

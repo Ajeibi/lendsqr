@@ -1,6 +1,9 @@
 # dependencies / build
 node_modules/
 dist/
+web/.next/
+web/out/
+web/next-env.d.ts
 coverage/
 *.tsbuildinfo
 
@@ -8,6 +11,8 @@ coverage/
 .env
 .env.*
 !.env.example
+# Non-secret: points `next dev` at the local API.
+!web/.env.development
 
 # logs
 *.log

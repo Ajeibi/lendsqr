@@ -25,7 +25,9 @@
     "seed": "nest build && node dist/database/seed.js",
     "seed:prod": "node dist/database/seed.js",
     "db:up": "docker compose up -d --wait",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "build:web": "npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

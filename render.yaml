@@ -4,7 +4,8 @@ services:
     runtime: node
     plan: free
     # Dev dependencies are needed to compile TypeScript, even with NODE_ENV=production.
-    buildCommand: npm ci --include=dev && npm run build
+    # Builds the API and the demo client (web/, a Next.js static export served at /app).
+    buildCommand: npm ci --include=dev && npm ci --include=dev --prefix web && npm run build && npm run build:web
     # Migrations and the idempotent demo seed run on every boot (pre-deploy hooks are paid-only).
     startCommand: npm run migrate:prod && npm run seed:prod && npm run start:prod
     healthCheckPath: /health

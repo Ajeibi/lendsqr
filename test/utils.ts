@@ -8,6 +8,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { KNEX } from '../src/database/database.module';
+import { WebClientBuild } from '../src/web-client';
 
 export interface TestContext {
   app: INestApplication<App>;
@@ -15,12 +16,18 @@ export interface TestContext {
   http: () => ReturnType<typeof request>;
 }
 
-export async function createTestApp(): Promise<TestContext> {
+/**
+ * @param webClient the demo-client build to serve; defaults to none, so API
+ *   tests don't depend on whether web/ has been built.
+ */
+export async function createTestApp(
+  webClient: WebClientBuild | null = null,
+): Promise<TestContext> {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
   }).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>();
-  configureApp(app);
+  configureApp(app, webClient);
   // Listen once on a random port so concurrent supertest calls share one
   // server instead of each binding its own.
   await app.listen(0, '127.0.0.1');
