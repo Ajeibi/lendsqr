@@ -41,8 +41,9 @@ signup and login, idempotent funding and replay, transfers and their failure cas
 statements from both sides, block/unblock with audit history, and the blacklist.
 
 1. Postman → **Import** → select the file.
-2. On the collection's **Variables** tab set `baseUrl` (`http://localhost:3000`, or the live
-   URL) and `demoPassword` / `adminPassword` (the seed passwords).
+2. `baseUrl` already points at the live deployment. On the collection's **Variables** tab,
+   set `demoPassword` / `adminPassword` (the seed passwords). To test a local server instead,
+   change `baseUrl` to `http://localhost:3000`.
 3. Run it with the collection **Runner**, or click through request by request. Tokens, ids
    and `Idempotency-Key`s are captured automatically.
 

@@ -1,13 +1,13 @@
 {
   "info": {
     "name": "Lendsqr Wallet Service",
-    "description": "End-to-end walkthrough of the Lendsqr wallet service: accounts and wallets, idempotent funding, concurrency-safe transfers, statements, blacklist and block/unblock.\n\n## Setup\nOn this collection's **Variables** tab set:\n- `baseUrl`: `http://localhost:3100` locally, or the live Render URL\n- `demoPassword` / `adminPassword`: the `SEED_DEMO_PASSWORD` / `SEED_ADMIN_PASSWORD` values\n\nThen use **Run collection** (all 33 requests, each with an automatic check), or click through in order. Tokens, ids and `Idempotency-Key`s are captured automatically.\n\n## Conventions\n- **Auth:** `Authorization: Bearer <token>` on everything except health, login and register.\n- **Money:** integers in **kobo** (100 = NGN 1). Strings and decimals are rejected.\n- **Idempotency:** `POST /wallets/fund` and `POST /transfers` require an `Idempotency-Key` header. Retrying with the same key replays the original response (`Idempotent-Replayed: true`) and never moves money twice.\n- **Errors:** always `{ statusCode, error, message, requestId }`; quote the `requestId` when reporting a problem.\n- **Karma:** signups call Adjutor Karma, limited to 9 lookups per minute in test mode. Leave a minute between full runs.",
+    "description": "End-to-end walkthrough of the Lendsqr wallet service: accounts and wallets, idempotent funding, concurrency-safe transfers, statements, blacklist and block/unblock.\n\n## Setup\n`baseUrl` already points at the **live deployment** (https://lendsqr-wallet-rjgm.onrender.com). On this collection's **Variables** tab, set:\n- `demoPassword` / `adminPassword`: the seed passwords (shared separately, never stored in the repo)\n- `baseUrl`: only change it to run against a local server, e.g. `http://localhost:3000`\n\nThe live service sleeps after ~15 minutes idle; if the first request times out, send it again.\n\nThen use **Run collection** (all 33 requests, each with an automatic check), or click through in order. Tokens, ids and `Idempotency-Key`s are captured automatically.\n\n## Conventions\n- **Auth:** `Authorization: Bearer <token>` on everything except health, login and register.\n- **Money:** integers in **kobo** (100 = NGN 1). Strings and decimals are rejected.\n- **Idempotency:** `POST /wallets/fund` and `POST /transfers` require an `Idempotency-Key` header. Retrying with the same key replays the original response (`Idempotent-Replayed: true`) and never moves money twice.\n- **Errors:** always `{ statusCode, error, message, requestId }`; quote the `requestId` when reporting a problem.\n- **Karma:** signups call Adjutor Karma, limited to 9 lookups per minute in test mode. Leave a minute between full runs.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:3100"
+      "value": "https://lendsqr-wallet-rjgm.onrender.com"
     },
     {
       "key": "demoPassword",
