@@ -72,6 +72,37 @@ describe('Transaction history (e2e)', () => {
     ]);
   });
 
+  it('orders the statement by when balances actually changed, even under concurrency', async () => {
+    // Concurrent transfers queue on the wallet lock: one that *started* first
+    // can be *applied* later, so ordering must follow the ledger, not start time.
+    await Promise.all(
+      Array.from({ length: 15 }, () =>
+        ctx
+          .http()
+          .post('/api/v1/transfers')
+          .set('Authorization', `Bearer ${alice.token}`)
+          .set('Idempotency-Key', randomUUID())
+          .send({ recipientWalletId: bob.walletId, amount: 100 })
+          .expect(201),
+      ),
+    );
+
+    const { balance } = await ctx
+      .db('wallets')
+      .where({ id: alice.walletId })
+      .first('balance');
+    const lines = (await get(alice, '?limit=100').expect(200)).body
+      .data as Line[];
+
+    expect(lines[0].balanceAfter).toBe(balance);
+    // Walking back through the statement replays the balance exactly.
+    for (let i = 0; i < lines.length - 1; i++) {
+      const delta =
+        lines[i].direction === 'DEBIT' ? -lines[i].amount : lines[i].amount;
+      expect(lines[i].balanceAfter - delta).toBe(lines[i + 1].balanceAfter);
+    }
+  });
+
   it('shows the same transfer as a CREDIT on the recipient side', async () => {
     const res = await get(bob, '').expect(200);
     expect(res.body.data).toEqual([

@@ -5,7 +5,11 @@ correct balances under concurrency and protection against duplicate or replayed 
 
 **Stack:** Node.js 22 · TypeScript · NestJS 11 · PostgreSQL 16 · Knex · Jest
 
-- Live API: _TBD_ · Swagger: `<url>/docs` · Health: `<url>/health`
+- **Live API:** https://lendsqr-wallet-rjgm.onrender.com (opens the Swagger docs)
+- Swagger: https://lendsqr-wallet-rjgm.onrender.com/docs · Health: https://lendsqr-wallet-rjgm.onrender.com/health
+
+> Hosted on Render's free tier: after ~15 minutes idle the first request can take ~50s while
+> the service wakes up.
 
 ## Running locally
 
@@ -260,7 +264,12 @@ conserved**: the sum of all balances equals the total ever funded.
 
 `GET /transactions` is built from the **ledger**, not the transactions table: one line
 per ledger entry on your wallet, joined to its transaction. Each line therefore shows the
-transaction from your side (`direction`, `balanceAfter`), like a bank statement. Someone
+transaction from your side (`direction`, `balanceAfter`), like a bank statement. Lines are
+ordered by the ledger sequence, not by timestamp: Postgres `now()` is a transaction's
+*start* time, and under concurrency a transfer that waited on the wallet lock is applied
+after ones that started later. The ledger id is assigned under the lock, so the newest line's
+`balanceAfter` is always the current balance (found by a race test against the live
+deployment, and covered by an e2e test). Someone
 else's transaction reference returns the same `404` as a non-existent one, so references
 can't be probed.
 

@@ -106,10 +106,11 @@ export class TransactionsRepository {
       this.ownLedger(ownerId)
         .join({ t: 'transactions' }, 't.id', 'l.transaction_id')
         .select('t.*', 'l.direction', 'l.balance_before', 'l.balance_after')
-        .orderBy([
-          { column: 'l.created_at', order: 'desc' },
-          { column: 'l.id', order: 'desc' },
-        ])
+        // Not created_at: now() is the transaction's *start* time, and a
+        // transfer that waited on the wallet lock is applied after ones that
+        // started later. The ledger id is assigned under the lock, so it is
+        // the true order in which this wallet's balance changed.
+        .orderBy('l.id', 'desc')
         .limit(limit)
         .offset(offset) as Promise<StatementRow[]>,
       this.ownLedger(ownerId).count<{ total: number }[]>({ total: '*' }),
