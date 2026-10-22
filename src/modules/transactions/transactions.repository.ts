@@ -44,6 +44,8 @@ export interface StatementRow extends TransactionRow {
   direction: LedgerDirection;
   balance_before: number;
   balance_after: number;
+  /** The other party's full name; null for funding (money from outside). */
+  counterparty_name: string | null;
 }
 
 const REFERENCE_PREFIX: Record<TransactionType, string> = {
@@ -103,9 +105,7 @@ export class TransactionsRepository {
     offset: number,
   ): Promise<{ rows: StatementRow[]; total: number }> {
     const [rows, [{ total }]] = await Promise.all([
-      this.ownLedger(ownerId)
-        .join({ t: 'transactions' }, 't.id', 'l.transaction_id')
-        .select('t.*', 'l.direction', 'l.balance_before', 'l.balance_after')
+      this.statementLines(ownerId)
         // Not created_at: now() is the transaction's *start* time, and a
         // transfer that waited on the wallet lock is applied after ones that
         // started later. The ledger id is assigned under the lock, so it is
@@ -126,10 +126,36 @@ export class TransactionsRepository {
     ownerId: string,
     reference: string,
   ): Promise<StatementRow | undefined> {
+    return this.statementLines(ownerId)
+      .where('t.reference', reference)
+      .first() as Promise<StatementRow | undefined>;
+  }
+
+  /**
+   * The user's ledger entries joined to their transaction and to the other
+   * party: the recipient for a debit, the sender for a credit, nobody for a
+   * funding. Only the counterparty's name is exposed, never their balance.
+   */
+  private statementLines(ownerId: string) {
     return this.ownLedger(ownerId)
       .join({ t: 'transactions' }, 't.id', 'l.transaction_id')
-      .where('t.reference', reference)
-      .first('t.*', 'l.direction', 'l.balance_before', 'l.balance_after');
+      .leftJoin(
+        { cw: 'wallets' },
+        'cw.id',
+        this.db.raw(
+          "CASE WHEN l.direction = 'DEBIT' THEN t.destination_wallet_id ELSE t.source_wallet_id END",
+        ),
+      )
+      .leftJoin({ cu: 'users' }, 'cu.id', 'cw.user_id')
+      .select(
+        't.*',
+        'l.direction',
+        'l.balance_before',
+        'l.balance_after',
+        this.db.raw(
+          "NULLIF(TRIM(CONCAT(cu.first_name, ' ', cu.last_name)), '') AS counterparty_name",
+        ),
+      );
   }
 
   /** Ledger entries on the wallet owned by this user. */

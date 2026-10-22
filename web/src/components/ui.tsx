@@ -1,11 +1,17 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { ApiError } from '@/lib/api';
+import { friendlyMessages } from '@/lib/friendly';
 
 export function Logo() {
   return (
     <Link href="/" className="logo">
-      <span className="logo-mark" aria-hidden="true" />
+      {/* Same mark as the favicon (app/icon.svg). */}
+      <svg className="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="8" fill="currentColor" />
+        <rect x="8" y="11" width="16" height="11" rx="2.5" fill="none" stroke="#fff" strokeWidth="2" />
+        <path d="M8 15h16" stroke="#fff" strokeWidth="2" />
+      </svg>
       Wallet
     </Link>
   );
@@ -64,11 +70,12 @@ type Tone = 'danger' | 'success' | 'warning' | 'info';
 export function Alert({
   tone,
   children,
-  meta,
+  detail,
 }: {
   tone: Tone;
   children: ReactNode;
-  meta?: ReactNode;
+  /** A smaller second line, e.g. a transaction reference. */
+  detail?: ReactNode;
 }) {
   return (
     <div
@@ -76,14 +83,14 @@ export function Alert({
       role={tone === 'danger' || tone === 'warning' ? 'alert' : 'status'}
     >
       {children}
-      {meta && <span className="alert-meta">{meta}</span>}
+      {detail && <span className="alert-detail">{detail}</span>}
     </div>
   );
 }
 
 /**
- * An API failure: every message from the server, plus its request id for
- * support. `retrySafe` marks money actions that reuse their Idempotency-Key.
+ * An API failure, in plain language (see lib/friendly). `retrySafe` marks
+ * money actions that reuse their Idempotency-Key, so retrying can't charge twice.
  */
 export function ErrorAlert({
   error,
@@ -92,23 +99,30 @@ export function ErrorAlert({
   error: ApiError;
   retrySafe?: boolean;
 }) {
+  const messages = friendlyMessages(error.messages);
   return (
     <Alert
       tone={error.isTransient ? 'warning' : 'danger'}
-      meta={error.requestId && `request ${error.requestId.slice(0, 8)}`}
+      detail={
+        retrySafe && error.isTransient
+          ? "It's safe to try again. You won't be charged twice."
+          : undefined
+      }
     >
-      {error.messages.length > 1 ? (
+      {messages.length > 1 ? (
         <ul>
-          {error.messages.map((message) => (
+          {messages.map((message) => (
             <li key={message}>{message}</li>
           ))}
         </ul>
       ) : (
-        error.message
-      )}
-      {retrySafe && error.isTransient && (
-        <div>It&apos;s safe to try again: the same request is never processed twice.</div>
+        messages[0]
       )}
     </Alert>
   );
+}
+
+/** A short, readable form of a transaction reference: "FND-42465D17". */
+export function shortReference(reference: string): string {
+  return reference.slice(0, 12).toUpperCase();
 }

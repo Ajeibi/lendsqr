@@ -103,6 +103,34 @@ describe('Transaction history (e2e)', () => {
     }
   });
 
+  it('names the other party: recipient for a debit, sender for a credit, nobody for funding', async () => {
+    const fullName = async (u: TestUser) => {
+      const row = await ctx
+        .db('users')
+        .where({ id: u.id })
+        .first('first_name', 'last_name');
+      return `${row.first_name} ${row.last_name}`;
+    };
+
+    const aliceLines = (await get(alice, '').expect(200)).body.data;
+    expect(aliceLines[0]).toMatchObject({
+      direction: 'DEBIT',
+      counterpartyName: await fullName(bob),
+    });
+    expect(aliceLines[1]).toMatchObject({
+      type: 'FUNDING',
+      counterpartyName: null,
+    });
+
+    const bobLine = (await get(bob, `/${transferRef}`).expect(200)).body;
+    expect(bobLine).toMatchObject({
+      direction: 'CREDIT',
+      counterpartyName: await fullName(alice),
+    });
+    // A name, never the counterparty's balance or contact details.
+    expect(JSON.stringify(bobLine)).not.toContain(alice.email);
+  });
+
   it('shows the same transfer as a CREDIT on the recipient side', async () => {
     const res = await get(bob, '').expect(200);
     expect(res.body.data).toEqual([

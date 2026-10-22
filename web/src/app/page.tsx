@@ -10,9 +10,15 @@ export default function SignInPage() {
   const { state, notice } = useSession();
   const router = useRouter();
 
+  // Admins land where their work is; everyone else on their wallet.
+  const home =
+    state.status === 'signed-in' && state.profile.user.role === 'ADMIN'
+      ? '/admin/'
+      : '/wallet/';
+
   useEffect(() => {
-    if (state.status === 'signed-in') router.replace('/wallet/');
-  }, [state.status, router]);
+    if (state.status === 'signed-in') router.replace(home);
+  }, [state.status, home, router]);
 
   if (state.status !== 'signed-out') return <Spinner />;
 

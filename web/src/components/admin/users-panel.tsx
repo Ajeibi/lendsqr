@@ -178,7 +178,14 @@ function UserCard({ detail, onChanged }: { detail: AdminUserDetail; onChanged: (
       {isSelf ? (
         <Alert tone="info">This is your account. Admins can&apos;t block themselves.</Alert>
       ) : (
-        <form onSubmit={onSubmit} noValidate>
+        <form
+          onSubmit={onSubmit}
+          onChange={() => {
+            setDone(null);
+            setError(null);
+          }}
+          noValidate
+        >
           <div className="field">
             <label htmlFor={`${id}-reason`}>Reason</label>
             <input id={`${id}-reason`} className="input" maxLength={255}
@@ -215,7 +222,7 @@ function History({ events }: { events: AdminUserDetail['statusHistory'] }) {
         <li key={`${event.createdAt}:${event.action}`}
           className={event.action === 'BLOCK' ? 'event-block' : 'event-unblock'}>
           <strong>{event.action === 'BLOCK' ? 'Blocked' : 'Unblocked'}</strong>{' '}
-          by {event.actorId === profile.user.id ? 'you' : `admin ${event.actorId.slice(0, 8)}…`}
+          by {event.actorId === profile.user.id ? 'you' : 'another admin'}
           <div className="muted person-meta">
             “{event.reason}” · {shortDate.format(new Date(event.createdAt))}
           </div>

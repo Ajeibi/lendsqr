@@ -1,12 +1,23 @@
 'use client';
 
 import { useId, useState, type FormEvent } from 'react';
-import { ApiError } from '@/lib/api';
+import { ACCOUNT_BLOCKED, ACCOUNT_BLOCKED_NOTICE, ApiError } from '@/lib/api';
 import { useSession } from './session-provider';
 import { Alert, ErrorAlert } from './ui';
 import { useSlowHint } from './use-slow-hint';
 
 type Mode = 'sign-in' | 'register';
+
+/** The seeded accounts; their passwords are shared separately, never shipped. */
+const DEMO_ACCOUNTS = ['ada@demo.wallet', 'tunde@demo.wallet', 'admin@demo.wallet'];
+
+function toFriendlyError(err: unknown): ApiError {
+  if (!(err instanceof ApiError)) return new ApiError(0, ['Something went wrong']);
+  if (err.status === 403 && err.message === ACCOUNT_BLOCKED) {
+    return new ApiError(403, [ACCOUNT_BLOCKED_NOTICE], err.requestId);
+  }
+  return err;
+}
 
 const EMPTY = {
   email: '',
@@ -46,11 +57,16 @@ export function AuthForm({ notice }: { notice: string | null }) {
       }
       // The page redirects once the session is signed in.
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err : new ApiError(0, ['Something went wrong']),
-      );
+      setError(toFriendlyError(err));
       setPending(false);
     }
+  }
+
+  /** Fills a seeded account's email and moves to the password field. */
+  function fillDemoAccount(email: string) {
+    setValues((v) => ({ ...v, email }));
+    setError(null);
+    document.getElementById(`${id}-password`)?.focus();
   }
 
   const isRegister = mode === 'register';
@@ -113,6 +129,18 @@ export function AuthForm({ notice }: { notice: string | null }) {
             : isRegister ? 'Create account' : 'Sign in'}
         </button>
       </form>
+
+      {!isRegister && (
+        <div className="demo-accounts">
+          <span className="muted">Try a demo account:</span>
+          {DEMO_ACCOUNTS.map((email) => (
+            <button key={email} type="button" className="chip" onClick={() => fillDemoAccount(email)}>
+              {email.split('@')[0]}
+            </button>
+          ))}
+          <div className="hint">Passwords are shared with the submission.</div>
+        </div>
+      )}
 
       {slow && (
         <Alert tone="info">

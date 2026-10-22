@@ -10,12 +10,19 @@ export class StatementLineDto extends TransactionResponseDto {
    * @example 750000
    */
   balanceAfter: number;
+  /**
+   * The other party: the recipient of a debit, the sender of a credit.
+   * Null for funding.
+   * @example Tunde Bello
+   */
+  counterpartyName: string | null;
 
   static fromStatement(row: StatementRow): StatementLineDto {
     return {
       ...TransactionResponseDto.from(row),
       direction: row.direction,
       balanceAfter: row.balance_after,
+      counterpartyName: row.counterparty_name,
     };
   }
 }

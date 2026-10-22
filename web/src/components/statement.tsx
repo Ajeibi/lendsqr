@@ -2,23 +2,12 @@
 
 import { useState } from 'react';
 import { formatKobo } from '@/lib/money';
+import { describeLine, type StatementLine } from '@/lib/statement';
 import type { Page } from '@/lib/types';
-import { ErrorAlert, Pager, shortDate } from './ui';
+import { ErrorAlert, Pager, shortDate, shortReference } from './ui';
 import { useApiQuery } from './use-api-query';
 
 const PAGE_SIZE = 10;
-
-export interface StatementLine {
-  reference: string;
-  type: 'FUNDING' | 'TRANSFER';
-  amount: number;
-  narration: string | null;
-  sourceWalletId: string | null;
-  destinationWalletId: string;
-  direction: 'DEBIT' | 'CREDIT';
-  balanceAfter: number;
-  createdAt: string;
-}
 
 /** `version` changes whenever money moves, so the statement reloads. */
 export function Statement({ version }: { version: number }) {
@@ -87,27 +76,10 @@ export function Statement({ version }: { version: number }) {
   );
 }
 
-function shortId(id: string): string {
-  return `${id.slice(0, 8)}…`;
-}
-
-/** A short title plus the detail line underneath (counterparty and note). */
-function describe(line: StatementLine): { title: string; detail: string | null } {
-  if (line.type === 'FUNDING') return { title: 'Money added', detail: line.narration };
-  const counterparty =
-    line.direction === 'DEBIT'
-      ? `To ${shortId(line.destinationWalletId)}`
-      : `From ${shortId(line.sourceWalletId ?? '')}`;
-  return {
-    title: line.direction === 'DEBIT' ? 'Sent' : 'Received',
-    detail: line.narration ? `${counterparty} · ${line.narration}` : counterparty,
-  };
-}
-
 function Row({ line }: { line: StatementLine }) {
   const credit = line.direction === 'CREDIT';
   const date = shortDate.format(new Date(line.createdAt));
-  const { title, detail } = describe(line);
+  const { title, detail } = describeLine(line);
   return (
     <tr>
       <td>
@@ -123,7 +95,7 @@ function Row({ line }: { line: StatementLine }) {
         </div>
       </td>
       <td className="mono hide-sm" title={line.reference}>
-        {line.reference.slice(0, 8)}…
+        {shortReference(line.reference)}
       </td>
       <td className="muted hide-sm">{date}</td>
       <td className={`num ${credit ? 'amount-in' : 'amount-out'}`}>

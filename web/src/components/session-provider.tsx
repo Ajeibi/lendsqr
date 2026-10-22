@@ -10,7 +10,14 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { api, ApiError, endsSession, SESSION_ENDED_EVENT } from '@/lib/api';
+import {
+  ACCOUNT_BLOCKED,
+  ACCOUNT_BLOCKED_NOTICE,
+  api,
+  ApiError,
+  endsSession,
+  SESSION_ENDED_EVENT,
+} from '@/lib/api';
 import {
   clearToken,
   readToken,
@@ -83,8 +90,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const onEnded = (event: Event) => {
       const reason = (event as CustomEvent<string>).detail;
       signOut(
-        reason === 'Account is blocked'
-          ? 'Your account has been blocked. Contact support if you think this is a mistake.'
+        reason === ACCOUNT_BLOCKED
+          ? ACCOUNT_BLOCKED_NOTICE
           : 'Your session expired. Sign in again.',
       );
     };

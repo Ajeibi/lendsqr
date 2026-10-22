@@ -49,5 +49,11 @@ export function useMoneyAction<T>() {
     }
   }
 
-  return { run, pending, error, result, clearError: () => setError(null) };
+  /** Clears the last outcome, e.g. once the user starts the next one. */
+  function dismiss() {
+    setResult(null);
+    setError(null);
+  }
+
+  return { run, pending, error, result, dismiss };
 }

@@ -766,11 +766,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('newest line is the transfer, as a DEBIT', () => {",
+                  "pm.test('newest line is the transfer, as a DEBIT to Tunde by name', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const [latest] = pm.response.json().data;",
                   "  pm.expect(latest.reference).to.eql(pm.collectionVariables.get('transferReference'));",
                   "  pm.expect(latest.direction).to.eql('DEBIT');",
+                  "  pm.expect(latest.counterpartyName).to.eql('Tunde Bello');",
                   "});"
                 ]
               }
@@ -785,7 +786,7 @@
               }
             ],
             "url": "{{baseUrl}}/api/v1/transactions?limit=5",
-            "description": "Ada's newest statement line is the transfer, shown from her side as a **DEBIT** with her balance after it.\n\n---\n### GET /api/v1/transactions\nYour wallet's statement, **newest first**. **Bearer token required.**\n\n**Query**: `page` (default 1), `limit` (default 20, max 100)\n\n**Response 200**\n```json\n{\n  \"data\": [{\n    \"reference\": \"TRF-…\", \"type\": \"TRANSFER\", \"status\": \"SUCCESS\",\n    \"amount\": 150000, \"currency\": \"NGN\",\n    \"sourceWalletId\": \"…\", \"destinationWalletId\": \"…\", \"narration\": \"…\",\n    \"direction\": \"DEBIT\", \"balanceAfter\": 1100000, \"createdAt\": \"…\"\n  }],\n  \"meta\": { \"page\": 1, \"limit\": 20, \"total\": 3 }\n}\n```\nEach line is built from **your** ledger entry, so `direction` and `balanceAfter` are from your side, like a bank statement."
+            "description": "Ada's newest statement line is the transfer, shown from her side as a **DEBIT** to Tunde (by name) with her balance after it.\n\n---\n### GET /api/v1/transactions\nYour wallet's statement, **newest first**. **Bearer token required.**\n\n**Query**: `page` (default 1), `limit` (default 20, max 100)\n\n**Response 200**\n```json\n{\n  \"data\": [{\n    \"reference\": \"TRF-…\", \"type\": \"TRANSFER\", \"status\": \"SUCCESS\",\n    \"amount\": 150000, \"currency\": \"NGN\",\n    \"sourceWalletId\": \"…\", \"destinationWalletId\": \"…\", \"narration\": \"…\",\n    \"direction\": \"DEBIT\", \"balanceAfter\": 1100000,\n    \"counterpartyName\": \"Tunde Bello\", \"createdAt\": \"…\"\n  }],\n  \"meta\": { \"page\": 1, \"limit\": 20, \"total\": 3 }\n}\n```\nEach line is built from **your** ledger entry, so `direction` and `balanceAfter` are from your side, like a bank statement. `counterpartyName` is the recipient of a debit or the sender of a credit (`null` for funding); only their name is shared, never their balance or contact details."
           }
         },
         {

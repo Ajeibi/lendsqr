@@ -8,6 +8,11 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api/v1';
 /** Fired when the server ends the session (expired token, blocked account). */
 export const SESSION_ENDED_EVENT = 'wallet:session-ended';
 
+/** The API's message for a blocked account, and what we show people instead. */
+export const ACCOUNT_BLOCKED = 'Account is blocked';
+export const ACCOUNT_BLOCKED_NOTICE =
+  'Your account has been blocked. Contact support if you think this is a mistake.';
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -50,7 +55,7 @@ function fallbackMessage(status: number): string {
 export function endsSession(error: ApiError): boolean {
   return (
     error.status === 401 ||
-    (error.status === 403 && error.message === 'Account is blocked')
+    (error.status === 403 && error.message === ACCOUNT_BLOCKED)
   );
 }
 

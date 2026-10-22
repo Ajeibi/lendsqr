@@ -86,7 +86,14 @@ export function BlacklistPanel() {
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`}>Blacklist</h2>
-      <form className="form-row" onSubmit={onAdd}>
+      <form
+        className="form-row"
+        onSubmit={onAdd}
+        onChange={() => {
+          setNotice(null);
+          setError(null);
+        }}
+      >
         <div className="field">
           <label htmlFor={`${id}-type`}>Type</label>
           <select id={`${id}-type`} className="input" value={type}

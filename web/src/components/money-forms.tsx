@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { formatKobo, parseNairaToKobo } from '@/lib/money';
 import type { Wallet } from '@/lib/types';
 import { useSignedIn } from './session-provider';
-import { Alert, ErrorAlert } from './ui';
+import { Alert, ErrorAlert, shortReference } from './ui';
 import { useMoneyAction } from './use-money-action';
 
 interface Transaction {
@@ -52,7 +52,8 @@ export function AddMoneyForm({ onMoved }: { onMoved: OnMoved }) {
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`}>Add money</h2>
-      <form onSubmit={onSubmit} noValidate>
+      {/* Editing any field starts a new action: the last outcome no longer applies. */}
+      <form onSubmit={onSubmit} onChange={action.dismiss} noValidate>
         <AmountField
           id={`${id}-amount`}
           value={amount}
@@ -73,12 +74,15 @@ export function AddMoneyForm({ onMoved }: { onMoved: OnMoved }) {
       </form>
       {result &&
         (result.replayed ? (
-          <Alert tone="warning" meta="Idempotent-Replayed: true">
-            This top-up was already processed, so it wasn&apos;t added twice.
+          <Alert tone="info">
+            This top-up already went through, so we didn&apos;t add it again.
           </Alert>
         ) : (
-          <Alert tone="success" meta={result.data.transaction.reference}>
-            Added {formatKobo(result.data.transaction.amount)} to your wallet
+          <Alert
+            tone="success"
+            detail={`Reference ${shortReference(result.data.transaction.reference)}`}
+          >
+            Added {formatKobo(result.data.transaction.amount)} to your wallet.
           </Alert>
         ))}
       {action.error && <ErrorAlert error={action.error} retrySafe />}
@@ -128,7 +132,7 @@ export function SendMoneyForm({ onMoved }: { onMoved: OnMoved }) {
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`}>Send money</h2>
-      <form onSubmit={onSubmit} noValidate>
+      <form onSubmit={onSubmit} onChange={action.dismiss} noValidate>
         <div className="field">
           <label htmlFor={`${id}-to`}>Recipient email</label>
           <input
@@ -162,13 +166,15 @@ export function SendMoneyForm({ onMoved }: { onMoved: OnMoved }) {
       </form>
       {result &&
         (result.replayed ? (
-          <Alert tone="warning" meta="Idempotent-Replayed: true">
-            This transfer was already processed, so it wasn&apos;t sent twice.
-            Showing the original result.
+          <Alert tone="info">
+            This transfer already went through, so we didn&apos;t send it again.
           </Alert>
         ) : (
-          <Alert tone="success" meta={result.data.transaction.reference}>
-            Sent {formatKobo(result.data.transaction.amount)} to {sentTo}
+          <Alert
+            tone="success"
+            detail={`Reference ${shortReference(result.data.transaction.reference)}`}
+          >
+            Sent {formatKobo(result.data.transaction.amount)} to {sentTo}.
           </Alert>
         ))}
       {action.error && <ErrorAlert error={action.error} retrySafe />}

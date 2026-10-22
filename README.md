@@ -20,7 +20,7 @@ Optional demo client: Next.js 16 (static export) served by the API at `/app`.
 |---|---|---|
 | **Balances stay exact under concurrency** | Every money movement runs in one DB transaction that locks the wallet rows (`FOR UPDATE`), in wallet-id order | 50 parallel ₦10 transfers from a ₦100 wallet → exactly 10 succeed, 40 refused, balance never below 0. Run against the **live deployment** as well as in the e2e suite |
 | **No duplicate or replayed transactions** | Required `Idempotency-Key`, claimed in the same DB transaction as the money movement | The same transfer fired 10× at once moves money once and returns 10 byte-identical responses |
-| **Secure by default** | Every route needs a JWT unless explicitly public; strict validation; blocked accounts cut off immediately; blacklist (local + Lendsqr Adjutor Karma) at signup | 41 unit + 117 e2e API tests, 41 client unit tests, plus a 33-step Postman walkthrough |
+| **Secure by default** | Every route needs a JWT unless explicitly public; strict validation; blocked accounts cut off immediately; blacklist (local + Lendsqr Adjutor Karma) at signup | 41 unit + 118 e2e API tests, 56 client unit tests, plus a 33-step Postman walkthrough |
 
 Every funding and transfer test ends by checking the ledger: each balance equals its credits
 minus debits, every entry's arithmetic holds, and the total of all balances equals the total
@@ -287,7 +287,7 @@ demo client at http://localhost:3000/app/.
 
 ```bash
 npm test             # 41 unit tests
-npm run test:e2e     # 117 end-to-end tests against the wallet_test database
+npm run test:e2e     # 118 end-to-end tests against the wallet_test database
 npx newman run postman/lendsqr-wallet.postman_collection.json --env-var baseUrl=http://localhost:3000 --env-var demoPassword=... --env-var adminPassword=...
 ```
 

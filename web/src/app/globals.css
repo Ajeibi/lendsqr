@@ -8,7 +8,8 @@
   --primary: #2453d6;
   --primary-hover: #1c43b1;
   --primary-soft: #e9effd;
-  --on-primary-muted: #c9d6fb;
+  /* 5.2:1 on --primary (WCAG AA for small text). */
+  --on-primary-muted: #dce5fd;
   --success: #12805c;
   --success-soft: #e6f5ef;
   --danger: #c4314b;
@@ -236,12 +237,11 @@ h2 {
   background: var(--primary-soft);
   color: var(--primary);
 }
-.alert-meta {
+.alert-detail {
   display: block;
-  opacity: 0.8;
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 2px;
+  opacity: 0.85;
 }
 .badge {
   display: inline-block;
@@ -289,8 +289,8 @@ h2 {
 .logo-mark {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: var(--primary);
+  color: var(--primary);
+  flex: none;
 }
 .nav {
   display: flex;
@@ -383,6 +383,32 @@ h2 {
   background: #fff;
   color: var(--text);
   box-shadow: var(--shadow);
+}
+.demo-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+.demo-accounts .hint {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
 }
 .auth-footer {
   text-align: center;
