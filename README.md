@@ -1,19 +1,269 @@
 # Lendsqr Wallet Service
 
-A wallet service for user accounts, wallets and wallet-to-wallet transfers, built for
-correct balances under concurrency and protection against duplicate or replayed requests.
+A wallet service with user accounts, wallets and wallet-to-wallet transfers. It is built to
+keep balances exact under parallel requests, to never move money twice for a duplicated or
+replayed request, and to be secure by default.
 
-**Stack:** Node.js 22 · TypeScript · NestJS 11 · PostgreSQL 16 · Knex · Jest
+**Live:** https://lendsqr-wallet-rjgm.onrender.com (opens the Swagger docs) ·
+[Health](https://lendsqr-wallet-rjgm.onrender.com/health)
 
-- **Live API:** https://lendsqr-wallet-rjgm.onrender.com (opens the Swagger docs)
-- Swagger: https://lendsqr-wallet-rjgm.onrender.com/docs · Health: https://lendsqr-wallet-rjgm.onrender.com/health
+**Stack:** Node.js 22 · TypeScript · NestJS 11 · PostgreSQL · Knex · Jest · Render
 
-> Hosted on Render's free tier: after ~15 minutes idle the first request can take ~50s while
-> the service wakes up.
+> Render free tier: after ~15 minutes idle, the first request can take ~50s while the
+> service wakes up.
+
+## At a glance
+
+| Guarantee | How | Proof |
+|---|---|---|
+| **Balances stay exact under concurrency** | Every money movement runs in one DB transaction that locks the wallet rows (`FOR UPDATE`), in wallet-id order | 50 parallel ₦10 transfers from a ₦100 wallet → exactly 10 succeed, 40 refused, balance never below 0. Run against the **live deployment** as well as in the e2e suite |
+| **No duplicate or replayed transactions** | Required `Idempotency-Key`, claimed in the same DB transaction as the money movement | The same transfer fired 10× at once moves money once and returns 10 byte-identical responses |
+| **Secure by default** | Every route needs a JWT unless explicitly public; strict validation; blocked accounts cut off immediately; blacklist (local + Lendsqr Adjutor Karma) at signup | 41 unit + 111 e2e tests, plus a 33-step Postman walkthrough |
+
+Every funding and transfer test ends by checking the ledger: each balance equals its credits
+minus debits, every entry's arithmetic holds, and the total of all balances equals the total
+ever funded (money is conserved).
+
+## Review in 5 minutes
+
+**Option A: run everything (recommended).** Import
+[`postman/lendsqr-wallet.postman_collection.json`](postman/lendsqr-wallet.postman_collection.json)
+into Postman. It already points at the live service. On the collection's **Variables** tab
+set `demoPassword` and `adminPassword` (sent with the submission), then click **Run
+collection**. That's 33 requests in seven steps, each with an automatic check, and every
+request's **Docs** tab explains what it demonstrates.
+
+**Option B: click through Swagger** at https://lendsqr-wallet-rjgm.onrender.com:
+
+1. `POST /auth/login` as `ada@demo.wallet` → copy `accessToken` → **Authorize**.
+2. `POST /wallets/fund` with an `Idempotency-Key` of your own (any new value, e.g. a UUID)
+   and `{ "amount": 250000 }` (₦2,500; amounts are in kobo).
+3. Send **exactly the same request again**: same response, header `Idempotent-Replayed: true`,
+   and the balance only went up once.
+4. `POST /transfers` with a new key and
+   `{ "recipientEmail": "tunde@demo.wallet", "amount": 150000 }`.
+5. `GET /transactions`: your statement, each line with `direction` and `balanceAfter`.
+6. Try `POST /transfers` with an amount larger than your balance → `422 Insufficient funds`.
+
+| Seeded account | Role | Opening balance |
+|---|---|---|
+| `admin@demo.wallet` | ADMIN | – |
+| `ada@demo.wallet` | USER | ₦10,000.00 |
+| `tunde@demo.wallet` | USER | ₦5,000.00 |
+
+## The brief, mapped
+
+| Requirement | Where | Tested in |
+|---|---|---|
+| Create user accounts and their wallets | User and wallet are created in **one transaction**: [`auth.service.ts`](src/modules/auth/auth.service.ts) | [`auth.e2e-spec.ts`](test/auth.e2e-spec.ts) |
+| Transfers between wallets | [`transfers.service.ts`](src/modules/transfers/transfers.service.ts) | [`transfers.e2e-spec.ts`](test/transfers.e2e-spec.ts) |
+| Check users against a blacklist | Local list + Adjutor Karma: [`blacklist.service.ts`](src/modules/blacklist/blacklist.service.ts), [`karma.client.ts`](src/modules/blacklist/karma.client.ts); admin-managed via `/admin/blacklist` | [`karma.client.spec.ts`](src/modules/blacklist/karma.client.spec.ts), [`blacklist.service.spec.ts`](src/modules/blacklist/blacklist.service.spec.ts), [`admin-blacklist.e2e-spec.ts`](test/admin-blacklist.e2e-spec.ts) |
+| Block / unblock accounts | Audited, race-safe status changes: [`admin-users.service.ts`](src/modules/users/admin-users.service.ts) | [`admin-users.e2e-spec.ts`](test/admin-users.e2e-spec.ts) |
+| Concurrency: accurate balances under parallel requests | Ordered row locks: [`wallets.repository.ts`](src/modules/wallets/wallets.repository.ts) | `concurrency` blocks in [`transfers.e2e-spec.ts`](test/transfers.e2e-spec.ts) and [`wallets.e2e-spec.ts`](test/wallets.e2e-spec.ts) |
+| Protection against duplicate or replayed transactions | [`idempotency.service.ts`](src/modules/idempotency/idempotency.service.ts) | `idempotency` blocks in the same files |
+| Secure by default | Global auth and role guards: [`jwt-auth.guard.ts`](src/common/auth/jwt-auth.guard.ts); validation and headers: [`app.setup.ts`](src/app.setup.ts); env validated at boot: [`env.validation.ts`](src/config/env.validation.ts) | Throughout |
+| Node.js + TypeScript, NestJS, SQL | NestJS 11, PostgreSQL via Knex migrations: [`migrations/`](src/database/migrations) | – |
+| Hosted on Render | [`render.yaml`](render.yaml) Blueprint: web service + Postgres | Live URL above |
+
+## Data model
+
+```mermaid
+erDiagram
+    USERS ||--|| WALLETS : owns
+    WALLETS ||--o{ LEDGER_ENTRIES : "balance changes"
+    TRANSACTIONS ||--|{ LEDGER_ENTRIES : "recorded as"
+    WALLETS ||--o{ TRANSACTIONS : "destination of"
+    WALLETS |o--o{ TRANSACTIONS : "source of"
+    USERS ||--o{ IDEMPOTENCY_KEYS : sends
+    USERS ||--o{ ACCOUNT_STATUS_EVENTS : "blocked / unblocked"
+    USERS |o--o{ BLACKLIST : "added by (admin)"
+
+    USERS {
+        uuid id PK
+        string email UK "lower-cased"
+        string phone_number UK "+234..."
+        string password_hash "argon2id"
+        string role "USER | ADMIN"
+        string status "ACTIVE | BLOCKED"
+    }
+    WALLETS {
+        uuid id PK
+        uuid user_id FK,UK
+        string currency "NGN"
+        bigint balance "kobo, CHECK >= 0"
+    }
+    TRANSACTIONS {
+        uuid id PK
+        string reference UK "FND-/TRF-uuid"
+        string type "FUNDING | TRANSFER"
+        bigint amount "CHECK > 0"
+        uuid source_wallet_id FK "null for funding"
+        uuid destination_wallet_id FK
+        uuid initiated_by FK
+    }
+    LEDGER_ENTRIES {
+        bigint id PK "order of balance changes"
+        uuid transaction_id FK
+        uuid wallet_id FK
+        string direction "DEBIT | CREDIT"
+        bigint amount
+        bigint balance_before
+        bigint balance_after "CHECK >= 0"
+    }
+    IDEMPOTENCY_KEYS {
+        uuid user_id PK,FK
+        string key PK
+        string request_hash "sha256"
+        int response_status
+        json response_body "replayed verbatim"
+        timestamptz expires_at
+    }
+    BLACKLIST {
+        uuid id PK
+        string identity_type "EMAIL | PHONE | BVN"
+        string identity "normalised"
+        string reason
+    }
+    ACCOUNT_STATUS_EVENTS {
+        bigint id PK
+        uuid user_id FK
+        string action "BLOCK | UNBLOCK"
+        string reason
+        uuid actor_id FK
+    }
+```
+
+## Design decisions
+
+### Money and the ledger
+- **Integer minor units (kobo)** in `BIGINT` columns; no floating point anywhere. The API
+  only accepts JSON integers (`"100"`, `10.5`, `0` and negatives are rejected), with a
+  per-transaction cap (`MAX_TRANSACTION_AMOUNT`, default ₦5,000,000).
+- **Double-entry ledger:** every balance change writes a ledger entry with
+  `balance_before` / `balance_after`; a transfer writes a DEBIT and a CREDIT.
+- **Database constraints are the last line of defence**, even if application code were
+  wrong: `CHECK (balance >= 0)`, positive amounts, no self-transfers, unique references.
+
+### Concurrency
+Every money-moving request runs this inside **one database transaction**:
+
+```
+1. claim the Idempotency-Key      INSERT INTO idempotency_keys (user, key, request hash)
+2. lock the wallet(s)             SELECT ... ORDER BY wallet id FOR UPDATE OF wallets, FOR SHARE OF users
+3. check status, limits, balance  (under the locks: these are the values that count)
+4. update balance(s)
+5. write transaction + ledger entries
+6. store the response on the key
+COMMIT
+```
+
+- **`FOR UPDATE` on the wallet** makes concurrent changes queue instead of overwriting each
+  other. With the lock removed, the 25-parallel-fundings test loses about 90% of the
+  updates, which shows the test really exercises the race.
+- **Locks are taken in wallet-id order in one query**, so A→B and B→A at the same moment
+  can't deadlock (tested: 40 opposite-direction transfers, all succeed).
+- **`FOR SHARE` on the owner's user row** means a block waits for in-flight transfers, and
+  nothing that starts after a block commits can move money.
+- No distributed locks, queues or caches: Postgres row locks and constraints do the work.
+
+### Duplicate and replay protection
+`POST /wallets/fund` and `POST /transfers` **require** an `Idempotency-Key` header.
+
+| Situation | Result |
+|---|---|
+| New key | Executes, `201` |
+| Same key + same payload (retry, double-click, replay) | Original response replayed **byte-for-byte** with `Idempotent-Replayed: true`; no money moves |
+| Same key, fired concurrently | Postgres makes duplicates wait on the first insert, then they replay its result |
+| Same key + different payload, or a different endpoint | `422`: a key belongs to exactly one operation |
+| The request failed (insufficient funds, blocked...) | The claim rolls back too, so the client can retry with the same key |
+| Key older than `IDEMPOTENCY_TTL_HOURS` (24h) | Treated as new |
+
+- Claiming the key **in the same transaction** as the work means there is no window where
+  money has moved but the key isn't recorded, or the reverse.
+- Keys are **scoped per user**. The fingerprint is a SHA-256 of the operation plus the
+  validated payload as canonical JSON, so field order doesn't matter but any value change
+  does.
+- Stored responses use Postgres `json`, not `jsonb` (which reorders keys), so replays are
+  exact.
+
+### Onboarding and the blacklist
+- Signup checks, in order: validation (`400`) → duplicate email/phone (`409`) → **local
+  blacklist** → **Lendsqr Adjutor Karma** for email and phone (`403` on a match) → create user
+  and wallet in one transaction.
+- **Why both lists:** Karma is the ecosystem-wide record of defaulters and fraud that a
+  lender shouldn't skip; the local list lets the operator act on its own intelligence
+  immediately.
+- **A Karma record only counts if its `karma_identity` matches what we asked about.**
+  Test-mode Adjutor apps return the same mock record for every lookup, and that must never
+  block a real customer.
+- **Fail closed:** if Karma times out (3s), errors or is rate-limited, signup is refused with
+  `503`, including on the hosted demo. For a lender, onboarding an unchecked identity is
+  worse than asking someone to retry. `KARMA_FAIL_OPEN=true` flips this.
+- **Karma calls are spent carefully:** they're rate-limited (9/min in test mode, two per
+  signup) and billed per call in live mode, so invalid and duplicate signups are rejected
+  before Karma is called.
+- **To see a refusal:** as admin, `POST /admin/blacklist`
+  `{ "identityType": "EMAIL", "identity": "someone@example.com", "reason": "demo" }`, then
+  register with that email → `403`.
+- **Identities are normalised** (lower-cased emails; Nigerian phones in any common format
+  become `+234…`), so uniqueness and blacklist matching can't be bypassed by reformatting.
+- The blacklist gates **signup**; existing accounts are restricted with an explicit,
+  audited **block**.
+
+### Blocking accounts
+- `PATCH /admin/users/:id/block` and `/unblock` require a `reason` and write an audit event
+  with the acting admin, in the same transaction as the status change. Repeating the
+  current state is `409`; admins can't block themselves.
+- A block takes effect **immediately and everywhere**: login refused, existing tokens
+  rejected (the auth guard re-reads the user on every request), no sending or funding
+  (`403`), no receiving (`422`).
+
+### Authentication and security
+- **Secure by default:** a global JWT guard (routes opt out with `@Public()`) and a role
+  guard; helmet headers; rate limiting (10/min per IP on auth routes); strict DTO validation
+  that rejects unknown fields (e.g. `"role": "ADMIN"` at signup); environment validated at
+  boot; one error shape `{ statusCode, error, message, requestId }` with no stack traces.
+- Passwords hashed with **argon2id**. Login gives the same `401` for an unknown email and a
+  wrong password, and takes the same time for both, so emails can't be enumerated.
+- Users only ever see their own data: someone else's transaction reference gets the same
+  `404` as a missing one, and a transfer response never reveals the recipient's balance.
+
+### Transaction history
+`GET /transactions` is built from the **ledger**: one line per entry on your wallet, so each
+line shows your side (`direction`, `balanceAfter`), like a bank statement. Lines are ordered
+by ledger sequence, not timestamp. Postgres `now()` is a transaction's *start* time, and
+a transfer that waited on a lock is applied after ones that started later. This was found by
+a race test against the live deployment and is covered by a regression test.
+
+> Funding is simulated: in production the credit would come from a payment provider's
+> verified webhook, using the provider's reference as the idempotency key.
+
+## API reference
+
+All routes are under `/api/v1` and need `Authorization: Bearer <token>` unless marked
+public. Full request/response details are in Swagger and in each Postman request's Docs.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/register` | public | Blacklist check, then create the user and NGN wallet; returns a token |
+| POST | `/auth/login` | public | Email + password → bearer token (1h) |
+| GET | `/users/me` | user | Profile and wallet |
+| GET | `/wallets/me` | user | Wallet and balance |
+| POST | `/wallets/fund` | user | Credit your wallet (simulated deposit). **`Idempotency-Key` required** |
+| POST | `/transfers` | user | Send to `recipientWalletId` or `recipientEmail`. **`Idempotency-Key` required** |
+| GET | `/transactions?page=&limit=` | user | Your statement, newest first |
+| GET | `/transactions/:reference` | user | One of your transactions |
+| GET | `/admin/users?page=&limit=&email=` | admin | List users |
+| GET | `/admin/users/:id` | admin | User, wallet and block/unblock history |
+| PATCH | `/admin/users/:id/block` · `/unblock` | admin | Block / restore an account (`reason` required) |
+| POST | `/admin/blacklist` | admin | Blacklist an email, phone or BVN (`reason` required) |
+| GET | `/admin/blacklist?page=&limit=` | admin | List entries |
+| DELETE | `/admin/blacklist/:id` | admin | Remove an entry |
+| GET | `/health` | public | Liveness and DB check (no `/api/v1` prefix) |
 
 ## Running locally
 
-Requires Node 22+ and Docker.
+Requires Node 22+ and Docker (Postgres runs in a container; it isn't used in deployment).
 
 ```bash
 cp .env.example .env
@@ -21,269 +271,41 @@ npm install
 npm run db:up        # Postgres in Docker (also creates the wallet_test database)
 npm run migrate      # apply schema
 npm run seed         # demo admin + two funded users (idempotent)
-npm run start:dev
+npm run start:dev    # http://localhost:3000 → Swagger
 ```
 
-- API: http://localhost:3000/api/v1 · Swagger: http://localhost:3000/docs · Health: http://localhost:3000/health
-
-### Tests
-
 ```bash
-npm test             # unit tests
-npm run test:e2e     # end-to-end against the wallet_test database
-```
-
-### Postman walkthrough
-
-[`postman/lendsqr-wallet.postman_collection.json`](postman/lendsqr-wallet.postman_collection.json)
-walks through every feature in order (33 requests, each with an automatic check): health,
-signup and login, idempotent funding and replay, transfers and their failure cases,
-statements from both sides, block/unblock with audit history, and the blacklist.
-
-1. Postman → **Import** → select the file.
-2. `baseUrl` already points at the live deployment. On the collection's **Variables** tab,
-   set `demoPassword` / `adminPassword` (the seed passwords). To test a local server instead,
-   change `baseUrl` to `http://localhost:3000`.
-3. Run it with the collection **Runner**, or click through request by request. Tokens, ids
-   and `Idempotency-Key`s are captured automatically.
-
-From the command line:
-
-```bash
+npm test             # 41 unit tests
+npm run test:e2e     # 111 end-to-end tests against the wallet_test database
 npx newman run postman/lendsqr-wallet.postman_collection.json --env-var baseUrl=http://localhost:3000 --env-var demoPassword=... --env-var adminPassword=...
 ```
 
-> Signups call Adjutor Karma, which allows 9 lookups per minute in test mode. If you re-run
-> the collection back-to-back you may hit that limit and see the documented `503`; wait a
-> minute and run again.
-
-### Demo accounts (seeded)
-
-| Email | Role | Opening balance |
-|---|---|---|
-| `admin@demo.wallet` | ADMIN | – |
-| `ada@demo.wallet` | USER | ₦10,000.00 |
-| `tunde@demo.wallet` | USER | ₦5,000.00 |
-
-Passwords come from `SEED_ADMIN_PASSWORD` / `SEED_DEMO_PASSWORD`.
-
-## API
-
-All routes are under `/api/v1` and need `Authorization: Bearer <token>` unless marked public.
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/auth/register` | public | Blacklist check, then create the user and NGN wallet; returns a token |
-| POST | `/auth/login` | public | Email + password → bearer token |
-| GET | `/users/me` | user | Profile and wallet |
-| GET | `/wallets/me` | user | Wallet and balance |
-| POST | `/wallets/fund` | user | Credit your wallet (simulated deposit). **Requires `Idempotency-Key`** |
-| POST | `/transfers` | user | Send money to a wallet (by `recipientWalletId` or `recipientEmail`). **Requires `Idempotency-Key`** |
-| GET | `/transactions?page=&limit=` | user | Your statement, newest first: each line has `direction` (DEBIT/CREDIT) and `balanceAfter` |
-| GET | `/transactions/:reference` | user | One of your transactions (404 if your wallet wasn't part of it) |
-| GET | `/admin/users?page=&limit=&email=` | admin | List users, optionally by exact email |
-| GET | `/admin/users/:id` | admin | User, wallet and block/unblock history |
-| PATCH | `/admin/users/:id/block` | admin | Block an account (`reason` required) |
-| PATCH | `/admin/users/:id/unblock` | admin | Restore an account (`reason` required) |
-| POST | `/admin/blacklist` | admin | Blacklist an email, phone or BVN (stored normalised; `reason` required) |
-| GET | `/admin/blacklist?page=&limit=` | admin | List entries, newest first |
-| DELETE | `/admin/blacklist/:id` | admin | Remove an entry so the identity can sign up again |
-| GET | `/health` | public | Liveness + DB check (no prefix) |
-
-Errors always look like `{ statusCode, error, message, requestId }`.
-
-## Scripts
+Set `ADJUTOR_API_KEY` in `.env` to enable Karma; without it only the local blacklist
+applies. Karma allows 9 lookups per minute in test mode, so leave a minute between full
+Postman runs.
 
 | Script | Purpose |
 |---|---|
-| `migrate` / `migrate:rollback` / `migrate:status` | Schema migrations (run from compiled `dist/` so local and Render record identical migration names) |
+| `migrate` / `migrate:rollback` / `migrate:status` | Schema migrations, run from compiled `dist/` so local and Render record identical migration names |
 | `seed` | Idempotent demo data |
 | `migrate:prod`, `seed:prod`, `start:prod` | Used by Render on boot |
 
-## Deployment (Render)
+## Deployment
 
-`render.yaml` is a Render Blueprint: one Node web service plus one Postgres database.
-On boot the service runs migrations, the idempotent seed, then starts. Set
-`ADJUTOR_API_KEY`, `SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD` in the dashboard;
-`JWT_SECRET` is generated by Render.
-
-> Free tier: the service sleeps after ~15 minutes idle, so the first request can take
-> ~50s to wake it up.
-
-## Design decisions
-
-- **Money is integer minor units (kobo)** in `BIGINT` columns: no floating-point errors.
-- **Database constraints as the last line of defence:** `CHECK (balance >= 0)`, positive
-  amounts, no self-transfers, unique transaction references.
-- **Double-entry ledger:** every balance change writes ledger entries with
-  `balance_before` / `balance_after`, so balances can always be reconciled.
-- **Secure by default:** a global JWT guard (routes opt out with `@Public()`), role guard,
-  helmet, rate limiting, strict DTO validation (unknown fields rejected), env validated at
-  boot, a single error shape with no stack traces leaked, and a request id on every response.
-- **Blocking takes effect immediately:** the auth guard re-reads the user on each request,
-  so a blocked user's existing token stops working.
-
-### Onboarding and the blacklist
-
-- **User and wallet are created in one transaction**, so a user never exists without a wallet.
-- **Two blacklist sources**, checked before anything is written:
-  1. a local `blacklist` table, managed by admins through `/admin/blacklist` (free, no
-     network, and fully under the operator's control), then
-  2. Lendsqr **Adjutor Karma** (`GET /v2/verification/karma/:identity`) for the email and
-     phone number, in parallel: the shared, ecosystem-wide record of known defaulters and
-     fraud.
-- **Why both:** Karma is the industry signal a lender should never skip; the local list
-  lets the operator act immediately on its own intelligence, and is the only way to
-  demonstrate a refusal while Adjutor is in test mode.
-- **The blacklist gates onboarding; block/unblock restricts existing accounts.** Adding an
-  identity that already has an account doesn't silently freeze it: that's an explicit,
-  audited block.
-- **A Karma record counts as a hit only if its `karma_identity` matches the identity we
-  queried** (after normalisation). Test-mode Adjutor apps return the same mock record for
-  every lookup, and a mismatched record must never block a real customer. A `404` means
-  not listed.
-- **Fail closed, including on the hosted demo:** if Karma times out (3s), errors or returns
-  garbage, signup is refused with `503 Identity verification is temporarily unavailable`.
-  For a lender, onboarding an unchecked identity is worse than asking someone to retry.
-  I kept this on the live deployment too, rather than relaxing it to make the demo
-  smoother: if you ever see that 503, it's this rule working, and retrying shortly will
-  succeed. `KARMA_FAIL_OPEN=true` flips the behaviour. Without `ADJUTOR_API_KEY`, only the
-  local list applies (a warning is logged at boot).
-- **Karma calls are spent carefully:** they're rate-limited (9/minute for a test-mode app;
-  each signup makes two, for email and phone) and billed per call in live mode. So invalid
-  input (`400`) and duplicate email or phone (`409`) are rejected **before** Karma is called,
-  and the local list short-circuits it too. Concurrent duplicates that slip past the
-  pre-check are still caught by the database's unique constraints.
-- **Seeing a refusal in action:** Adjutor test mode can't produce a genuine Karma match, so
-  use the local list. Log in as the seeded admin, `POST /admin/blacklist`
-  `{ "identityType": "EMAIL", "identity": "someone@example.com", "reason": "demo" }`, then
-  try to register with that email: `403 identity is blacklisted`.
-- **Identities are normalised** before storage and comparison: emails are lower-cased,
-  Nigerian phone numbers in any common format (`0803…`, `234803…`, `+234 803…`) become
-  `+234803…`. This makes uniqueness and blacklist matching format-proof.
-
-### Authentication
-
-- Passwords are hashed with **argon2id**.
-- Login returns the **same 401** for an unknown email and a wrong password, and runs a
-  hash verification in both cases so response time doesn't reveal which emails exist.
-  "Account is blocked" (403) is only shown after the password is verified.
-- Auth endpoints have a tighter rate limit (10/min per IP) than the global default.
-- Duplicate sign-ups are caught by the database's unique constraints, so even two
-  simultaneous identical requests produce exactly one account (and a 409).
-
-### Money movement: exactly once, never lost
-
-Every money-moving request (funding now, transfers next) runs this inside **one database
-transaction**:
-
-```
-1. claim the Idempotency-Key      INSERT INTO idempotency_keys (user, key, request hash)
-2. lock the wallet(s)             SELECT ... FOR UPDATE OF wallets, FOR SHARE OF users
-3. check status, limits, balance
-4. update balance(s)
-5. write transaction + ledger entries (balance_before / balance_after)
-6. store the response on the key
-COMMIT
-```
-
-**Duplicate and replay protection (`Idempotency-Key` header, required):**
-
-| Situation | Result |
-|---|---|
-| New key | Executes, `201` |
-| Same key + same payload (retry, double-click, replay) | Original response replayed **byte-for-byte** with `Idempotent-Replayed: true`; no money moves |
-| Same key fired concurrently | Postgres makes the duplicates wait on the first insert, then they replay its result. Tested with 10 simultaneous identical requests: one credit, ten identical responses |
-| Same key + different payload | `422`: the key is being misused |
-| Request failed (e.g. blocked account, insufficient funds) | The claim rolls back with it, so the client can safely retry with the same key |
-| Key older than `IDEMPOTENCY_TTL_HOURS` (24h) | Treated as new |
-
-- Keys are **scoped per user**, so one user can't collide with or probe another's keys.
-- The request fingerprint is a SHA-256 of the operation plus the validated payload as
-  canonical JSON (sorted keys), so field order doesn't matter but any value change does.
-- Claiming the key in the same transaction as the work means there is no window where
-  money has moved but the key isn't recorded, or vice versa. No distributed locks, no
-  separate cache.
-- Stored responses use Postgres `json` (not `jsonb`, which reorders keys) so replays are
-  exact.
-
-**Concurrency:**
-
-- The wallet row is locked `FOR UPDATE` before its balance is read, so concurrent changes
-  queue instead of overwriting each other. Tested with 25 simultaneous fundings with
-  distinct keys: final balance equals the exact sum. With the lock removed the same test
-  loses about 90% of the updates, which shows it really exercises the race.
-- The owner's `users` row is locked `FOR SHARE`, so a block/unblock waits for in-flight
-  money movement, and nothing that starts after a block commits can move money.
-- Multi-wallet operations lock rows in wallet-id order (one ordered query), so two
-  transfers in opposite directions cannot deadlock.
-- Amounts are validated as JSON integers (kobo); `"100"`, `10.5`, `0` and negatives are
-  rejected. There's a per-transaction cap (`MAX_TRANSACTION_AMOUNT`, default NGN 5,000,000),
-  and the database `CHECK` constraints still back everything up.
-
-**Transfers** (`POST /transfers`) follow the same transaction outline, with these rules:
-
-- Both wallets are locked in **one ordered query** (wallet-id order), so A→B and B→A at the
-  same moment can't deadlock.
-- Checked **under the locks**: sender not blocked (`403`), recipient not blocked (`422`),
-  same currency, and `balance >= amount` (`422 Insufficient funds`). Self-transfers are
-  `400`, an unknown recipient is `404`.
-- Writes one `TRANSFER` transaction with a `DEBIT` (sender) and `CREDIT` (recipient)
-  ledger entry.
-- The response carries the sender's wallet only; the recipient's balance is never exposed.
-
-Proven under load in the e2e suite:
-
-| Scenario | Result |
-|---|---|
-| 50 concurrent transfers of ₦10 from a ₦100 wallet | Exactly **10 succeed**, 40 get `422`; sender ends at 0, never below |
-| 40 concurrent transfers, half A→B and half B→A | All succeed, no deadlocks, balances net out exactly |
-| 24 concurrent transfers from 8 senders into one wallet | Recipient credited with the exact total |
-| Same transfer fired 10× with one key | Money moves once; 10 byte-identical responses |
-
-**Ledger invariants**, asserted after every funding and transfer test:
-`wallet.balance = Σ credits − Σ debits`; each entry's `balance_after = balance_before ± amount`;
-entries chain (each `balance_before` equals the previous `balance_after`); and **money is
-conserved**: the sum of all balances equals the total ever funded.
-
-### Blocking accounts
-
-- `PATCH /admin/users/:id/block` and `/unblock` require a `reason`. Each change writes an
-  `account_status_events` row with the acting admin, **in the same transaction** as the
-  status change. Repeating the same action is a `409` and writes no duplicate audit row.
-  Admins can't block themselves.
-- **A block takes effect everywhere, immediately:** no login, existing tokens rejected
-  (the auth guard re-reads the user on every request), no sending or funding (`403`), and
-  no receiving (a sender gets `422 Recipient account cannot receive transfers`).
-- **Race-safe:** the block locks the user row `FOR UPDATE`, while money movement holds
-  `FOR SHARE` on it. So a block waits for in-flight transfers to finish, and any transfer
-  that starts after it commits sees `BLOCKED`. Tested by firing a block alongside 20
-  concurrent transfers: every transfer either completes or is refused, with no deadlocks
-  and the ledger intact.
-
-### Transaction history
-
-`GET /transactions` is built from the **ledger**, not the transactions table: one line
-per ledger entry on your wallet, joined to its transaction. Each line therefore shows the
-transaction from your side (`direction`, `balanceAfter`), like a bank statement. Lines are
-ordered by the ledger sequence, not by timestamp: Postgres `now()` is a transaction's
-*start* time, and under concurrency a transfer that waited on the wallet lock is applied
-after ones that started later. The ledger id is assigned under the lock, so the newest line's
-`balanceAfter` is always the current balance (found by a race test against the live
-deployment, and covered by an e2e test). Someone
-else's transaction reference returns the same `404` as a non-existent one, so references
-can't be probed.
-
-> Funding is simulated: in production the credit would come from a payment provider's
-> verified webhook, using the provider's reference as the idempotency key.
+[`render.yaml`](render.yaml) is a Render Blueprint: one Node web service plus a managed
+Postgres database. Render builds from this repository, and on boot runs migrations, the
+idempotent seed, then the app. `JWT_SECRET` is generated by Render; `ADJUTOR_API_KEY`,
+`SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD` are set in the dashboard. The health check is
+`/health`.
 
 ## What I'd do with more time
 
 Deliberately left out to keep the scope to the brief:
 
-- **Password change and reset:** an authenticated change-password endpoint (current
-  password required), and "forgot password" via emailed single-use, expiring reset tokens.
-  Today a password is set once at signup.
-- **Refresh tokens:** access tokens currently last 1 hour with no refresh flow.
-- **Idempotency-key cleanup:** expired keys are ignored and reused correctly, but nothing
-  purges them yet; a scheduled job would.
+- **Password change and reset:** an authenticated change-password endpoint, and "forgot
+  password" via emailed single-use, expiring tokens. Today a password is set at signup.
+- **Refresh tokens** with rotation and reuse detection; access tokens currently last 1 hour.
+- **Idempotency-key cleanup:** expired keys are handled correctly but never purged; a
+  scheduled job would.
+- **Real funding** through a payment provider's verified webhooks instead of the simulated
+  deposit.
