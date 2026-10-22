@@ -1,6 +1,7 @@
 import {
   identitiesMatch,
   normalizeEmail,
+  normalizeIdentity,
   normalizeNigerianPhone,
 } from './identity';
 
@@ -24,6 +25,18 @@ describe('identity helpers', () => {
       expect(normalizeNigerianPhone(input)).toBeNull();
     },
   );
+
+  it.each([
+    ['EMAIL', ' Bad@Actor.COM ', 'bad@actor.com'],
+    ['EMAIL', 'not-an-email', null],
+    ['PHONE', '0803 123 4567', '+2348031234567'],
+    ['PHONE', '12345', null],
+    ['BVN', ' 22212345678 ', '22212345678'],
+    ['BVN', '2221234567', null],
+    ['BVN', '2221234567a', null],
+  ] as const)('normalizeIdentity(%s, %p) -> %p', (type, value, expected) => {
+    expect(normalizeIdentity(type, value)).toBe(expected);
+  });
 
   it('matches identities after normalisation', () => {
     expect(identitiesMatch('EMAIL', 'A@b.com', 'a@B.com')).toBe(true);

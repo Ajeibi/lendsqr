@@ -33,4 +33,44 @@ export class BlacklistRepository {
       })
       .first();
   }
+
+  async create(entry: {
+    type: IdentityType;
+    identity: string;
+    reason: string;
+    createdBy: string;
+  }): Promise<BlacklistRow> {
+    const [row] = await this.db<BlacklistRow>('blacklist')
+      .insert({
+        identity_type: entry.type,
+        identity: entry.identity,
+        reason: entry.reason,
+        created_by: entry.createdBy,
+      })
+      .returning('*');
+    return row;
+  }
+
+  /** Newest first. */
+  async list(
+    limit: number,
+    offset: number,
+  ): Promise<{ rows: BlacklistRow[]; total: number }> {
+    const [rows, [{ total }]] = await Promise.all([
+      this.db<BlacklistRow>('blacklist')
+        .orderBy([
+          { column: 'created_at', order: 'desc' },
+          { column: 'id', order: 'desc' },
+        ])
+        .limit(limit)
+        .offset(offset),
+      this.db('blacklist').count<{ total: number }[]>({ total: '*' }),
+    ]);
+    return { rows, total: Number(total) };
+  }
+
+  /** Returns true if an entry was removed. */
+  async deleteById(id: string): Promise<boolean> {
+    return (await this.db('blacklist').where({ id }).del()) > 0;
+  }
 }

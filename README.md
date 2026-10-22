@@ -50,6 +50,9 @@ All routes are under `/api/v1` and need `Authorization: Bearer <token>` unless m
 | GET | `/users/me` | user | Profile and wallet |
 | GET | `/wallets/me` | user | Wallet and balance |
 | POST | `/wallets/fund` | user | Credit your wallet (simulated deposit). **Requires `Idempotency-Key`** |
+| POST | `/admin/blacklist` | admin | Blacklist an email, phone or BVN (stored normalised; `reason` required) |
+| GET | `/admin/blacklist?page=&limit=` | admin | List entries, newest first |
+| DELETE | `/admin/blacklist/:id` | admin | Remove an entry so the identity can sign up again |
 | GET | `/health` | public | Liveness + DB check (no prefix) |
 
 Errors always look like `{ statusCode, error, message, requestId }`.
@@ -89,17 +92,32 @@ On boot the service runs migrations, the idempotent seed, then starts. Set
 
 - **User and wallet are created in one transaction**, so a user never exists without a wallet.
 - **Two blacklist sources**, checked before anything is written:
-  1. a local `blacklist` table (admin-managed, free, no network), then
+  1. a local `blacklist` table, managed by admins through `/admin/blacklist` (free, no
+     network, and fully under the operator's control), then
   2. Lendsqr **Adjutor Karma** (`GET /v2/verification/karma/:identity`) for the email and
-     phone number, in parallel.
+     phone number, in parallel: the shared, ecosystem-wide record of known defaulters and
+     fraud.
+- **Why both:** Karma is the industry signal a lender should never skip; the local list
+  lets the operator act immediately on its own intelligence, and is the only way to
+  demonstrate a refusal while Adjutor is in test mode.
+- **The blacklist gates onboarding; block/unblock restricts existing accounts.** Adding an
+  identity that already has an account doesn't silently freeze it: that's an explicit,
+  audited block.
 - **A Karma record counts as a hit only if its `karma_identity` matches the identity we
   queried** (after normalisation). Test-mode Adjutor apps return the same mock record for
   every lookup, and a mismatched record must never block a real customer. A `404` means
   not listed.
-- **Fail closed:** if Karma times out (3s), errors or returns garbage, signup is refused
-  with `503`. For a lender, onboarding an unchecked identity is worse than asking someone
-  to retry. `KARMA_FAIL_OPEN=true` flips this. Without `ADJUTOR_API_KEY`, only the local
-  list applies (a warning is logged at boot).
+- **Fail closed, including on the hosted demo:** if Karma times out (3s), errors or returns
+  garbage, signup is refused with `503 Identity verification is temporarily unavailable`.
+  For a lender, onboarding an unchecked identity is worse than asking someone to retry.
+  I kept this on the live deployment too, rather than relaxing it to make the demo
+  smoother: if you ever see that 503, it's this rule working, and retrying shortly will
+  succeed. `KARMA_FAIL_OPEN=true` flips the behaviour. Without `ADJUTOR_API_KEY`, only the
+  local list applies (a warning is logged at boot).
+- **Seeing a refusal in action:** Adjutor test mode can't produce a genuine Karma match, so
+  use the local list. Log in as the seeded admin, `POST /admin/blacklist`
+  `{ "identityType": "EMAIL", "identity": "someone@example.com", "reason": "demo" }`, then
+  try to register with that email: `403 identity is blacklisted`.
 - **Identities are normalised** before storage and comparison: emails are lower-cased,
   Nigerian phone numbers in any common format (`0803…`, `234803…`, `+234 803…`) become
   `+234803…`. This makes uniqueness and blacklist matching format-proof.
