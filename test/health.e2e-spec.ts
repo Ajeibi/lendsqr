@@ -17,6 +17,15 @@ describe('Health & schema (e2e)', () => {
     expect(res.headers['x-request-id']).toBeDefined();
   });
 
+  it('redirects the bare service URL to the API docs', async () => {
+    const res = await ctx.http().get('/').expect(302);
+    expect(res.headers.location).toBe('/docs');
+  });
+
+  it('keeps the redirect off the versioned API prefix', async () => {
+    await ctx.http().get('/api/v1').expect(404);
+  });
+
   it('returns the shared error shape for unknown routes', async () => {
     const res = await ctx.http().get('/api/v1/does-not-exist').expect(404);
     expect(res.body).toMatchObject({
