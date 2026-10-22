@@ -50,6 +50,7 @@ All routes are under `/api/v1` and need `Authorization: Bearer <token>` unless m
 | GET | `/users/me` | user | Profile and wallet |
 | GET | `/wallets/me` | user | Wallet and balance |
 | POST | `/wallets/fund` | user | Credit your wallet (simulated deposit). **Requires `Idempotency-Key`** |
+| POST | `/transfers` | user | Send money to a wallet (by `recipientWalletId` or `recipientEmail`). **Requires `Idempotency-Key`** |
 | POST | `/admin/blacklist` | admin | Blacklist an email, phone or BVN (stored normalised; `reason` required) |
 | GET | `/admin/blacklist?page=&limit=` | admin | List entries, newest first |
 | DELETE | `/admin/blacklist/:id` | admin | Remove an entry so the identity can sign up again |
@@ -181,9 +182,30 @@ COMMIT
   rejected. There's a per-transaction cap (`MAX_TRANSACTION_AMOUNT`, default NGN 5,000,000),
   and the database `CHECK` constraints still back everything up.
 
-**Ledger invariants**, asserted after every funding test:
+**Transfers** (`POST /transfers`) follow the same transaction outline, with these rules:
+
+- Both wallets are locked in **one ordered query** (wallet-id order), so A→B and B→A at the
+  same moment can't deadlock.
+- Checked **under the locks**: sender not blocked (`403`), recipient not blocked (`422`),
+  same currency, and `balance >= amount` (`422 Insufficient funds`). Self-transfers are
+  `400`, an unknown recipient is `404`.
+- Writes one `TRANSFER` transaction with a `DEBIT` (sender) and `CREDIT` (recipient)
+  ledger entry.
+- The response carries the sender's wallet only; the recipient's balance is never exposed.
+
+Proven under load in the e2e suite:
+
+| Scenario | Result |
+|---|---|
+| 50 concurrent transfers of ₦10 from a ₦100 wallet | Exactly **10 succeed**, 40 get `422`; sender ends at 0, never below |
+| 40 concurrent transfers, half A→B and half B→A | All succeed, no deadlocks, balances net out exactly |
+| 24 concurrent transfers from 8 senders into one wallet | Recipient credited with the exact total |
+| Same transfer fired 10× with one key | Money moves once; 10 byte-identical responses |
+
+**Ledger invariants**, asserted after every funding and transfer test:
 `wallet.balance = Σ credits − Σ debits`; each entry's `balance_after = balance_before ± amount`;
-and entries chain (each `balance_before` equals the previous `balance_after`).
+entries chain (each `balance_before` equals the previous `balance_after`); and **money is
+conserved**: the sum of all balances equals the total ever funded.
 
 > Funding is simulated: in production the credit would come from a payment provider's
 > verified webhook, using the provider's reference as the idempotency key.

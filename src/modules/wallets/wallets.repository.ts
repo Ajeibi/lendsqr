@@ -35,12 +35,31 @@ export class WalletsRepository {
     return trx<WalletRow>('wallets').where({ user_id: userId }).first();
   }
 
+  findById(id: string, trx: Knex = this.db): Promise<WalletRow | undefined> {
+    return trx<WalletRow>('wallets').where({ id }).first();
+  }
+
+  findByOwnerEmail(
+    email: string,
+    trx: Knex = this.db,
+  ): Promise<WalletRow | undefined> {
+    return trx<WalletRow>('wallets')
+      .join('users', 'users.id', 'wallets.user_id')
+      .where('users.email', email)
+      .first('wallets.*');
+  }
+
   async lockByUserId(
     userId: string,
     trx: Knex.Transaction,
   ): Promise<LockedWallet | undefined> {
     const [wallet] = await this.lock(trx, 'user_id', [userId]);
     return wallet;
+  }
+
+  /** Locks several wallets at once, always in wallet-id order. */
+  lockByIds(ids: string[], trx: Knex.Transaction): Promise<LockedWallet[]> {
+    return this.lock(trx, 'id', ids);
   }
 
   /**

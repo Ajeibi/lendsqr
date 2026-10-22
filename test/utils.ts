@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { INestApplication } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -67,6 +68,37 @@ export async function registerUser(
     email: payload.email,
     password: payload.password,
   };
+}
+
+/** Funds a user's wallet through the API. */
+export async function fundWallet(
+  ctx: TestContext,
+  user: TestUser,
+  amount: number,
+): Promise<void> {
+  const res = await ctx
+    .http()
+    .post('/api/v1/wallets/fund')
+    .set('Authorization', `Bearer ${user.token}`)
+    .set('Idempotency-Key', randomUUID())
+    .send({ amount });
+  if (res.status !== 201) {
+    throw new Error(`fund failed: ${res.status} ${JSON.stringify(res.body)}`);
+  }
+}
+
+/**
+ * Money is only created by FUNDING and only moved by TRANSFER, so the sum of
+ * all wallet balances must always equal the total ever funded.
+ */
+export async function expectMoneyConserved(db: Knex): Promise<void> {
+  const [{ balances }] = await db('wallets').sum<{ balances: number }[]>({
+    balances: 'balance',
+  });
+  const [{ funded }] = await db('transactions')
+    .where({ type: 'FUNDING' })
+    .sum<{ funded: number }[]>({ funded: 'amount' });
+  expect(Number(balances ?? 0)).toBe(Number(funded ?? 0));
 }
 
 /**

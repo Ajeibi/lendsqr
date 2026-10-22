@@ -12,6 +12,7 @@ import { envValidationSchema } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
+import { TransfersModule } from './modules/transfers/transfers.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
 
@@ -60,6 +61,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     UsersModule,
     AuthModule,
     WalletsModule,
+    TransfersModule,
   ],
   controllers: [AppController],
   providers: [
