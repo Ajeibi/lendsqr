@@ -173,6 +173,7 @@ h2 {
   color: var(--text);
   font: inherit;
   font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
 }
 .btn:hover {

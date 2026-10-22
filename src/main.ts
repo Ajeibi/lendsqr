@@ -17,7 +17,8 @@ async function bootstrap(): Promise<void> {
   const swagger = new DocumentBuilder()
     .setTitle('Lendsqr Wallet Service')
     .setDescription(
-      'User accounts, wallets and wallet-to-wallet transfers. Amounts are in kobo.',
+      'User accounts, wallets and wallet-to-wallet transfers. Amounts are in kobo. ' +
+        'Prefer clicking? Try the [demo client](/app/).',
     )
     .setVersion('1.0')
     .addBearerAuth()

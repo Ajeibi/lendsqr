@@ -16,6 +16,10 @@ function fakeBuild(): string {
     join(dir, 'wallet', 'index.html'),
     '<!doctype html><title>W</title>',
   );
+  writeFileSync(
+    join(dir, '404.html'),
+    '<!doctype html><title>Not found</title>',
+  );
   mkdirSync(join(dir, '_next', 'static', 'chunks'), { recursive: true });
   writeFileSync(join(dir, '_next', 'static', 'chunks', 'app.js'), '1');
   writeFileSync(
@@ -70,6 +74,12 @@ describe('Demo client at /app (e2e)', () => {
       /script-src 'self'(;|$)/,
     );
     expect(res.headers['content-security-policy']).not.toContain('sha256-');
+  });
+
+  it("serves the client's not-found page for unknown /app paths, with a 404", async () => {
+    const res = await ctx.http().get('/app/no-such-page/').expect(404);
+    expect(res.text).toContain('<title>Not found</title>');
+    expect(res.headers['content-security-policy']).toMatch(/sha256-abc123=/);
   });
 
   it('is not served at all when the client has not been built', () => {

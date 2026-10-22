@@ -75,6 +75,15 @@ function serveWebClient(
       );
     },
   });
+  // Anything under /app the export doesn't have gets its "page not found"
+  // screen, rather than the API's JSON 404.
+  app.use(
+    WEB_CLIENT_ROUTE,
+    (req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      res.status(404).sendFile('404.html', { root: webClient.dir });
+    },
+  );
 }
 
 function isWebClientPath(path: string): boolean {
