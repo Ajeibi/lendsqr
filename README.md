@@ -48,6 +48,8 @@ All routes are under `/api/v1` and need `Authorization: Bearer <token>` unless m
 | POST | `/auth/register` | public | Blacklist check, then create the user and NGN wallet; returns a token |
 | POST | `/auth/login` | public | Email + password → bearer token |
 | GET | `/users/me` | user | Profile and wallet |
+| GET | `/wallets/me` | user | Wallet and balance |
+| POST | `/wallets/fund` | user | Credit your wallet (simulated deposit). **Requires `Idempotency-Key`** |
 | GET | `/health` | public | Liveness + DB check (no prefix) |
 
 Errors always look like `{ statusCode, error, message, requestId }`.
@@ -112,4 +114,58 @@ On boot the service runs migrations, the idempotent seed, then starts. Set
 - Duplicate sign-ups are caught by the database's unique constraints, so even two
   simultaneous identical requests produce exactly one account (and a 409).
 
-_Concurrency control and idempotency for money movement are documented here as they are implemented._
+### Money movement: exactly once, never lost
+
+Every money-moving request (funding now, transfers next) runs this inside **one database
+transaction**:
+
+```
+1. claim the Idempotency-Key      INSERT INTO idempotency_keys (user, key, request hash)
+2. lock the wallet(s)             SELECT ... FOR UPDATE OF wallets, FOR SHARE OF users
+3. check status, limits, balance
+4. update balance(s)
+5. write transaction + ledger entries (balance_before / balance_after)
+6. store the response on the key
+COMMIT
+```
+
+**Duplicate and replay protection (`Idempotency-Key` header, required):**
+
+| Situation | Result |
+|---|---|
+| New key | Executes, `201` |
+| Same key + same payload (retry, double-click, replay) | Original response replayed **byte-for-byte** with `Idempotent-Replayed: true`; no money moves |
+| Same key fired concurrently | Postgres makes the duplicates wait on the first insert, then they replay its result. Tested with 10 simultaneous identical requests: one credit, ten identical responses |
+| Same key + different payload | `422`: the key is being misused |
+| Request failed (e.g. blocked account, insufficient funds) | The claim rolls back with it, so the client can safely retry with the same key |
+| Key older than `IDEMPOTENCY_TTL_HOURS` (24h) | Treated as new |
+
+- Keys are **scoped per user**, so one user can't collide with or probe another's keys.
+- The request fingerprint is a SHA-256 of the operation plus the validated payload as
+  canonical JSON (sorted keys), so field order doesn't matter but any value change does.
+- Claiming the key in the same transaction as the work means there is no window where
+  money has moved but the key isn't recorded, or vice versa. No distributed locks, no
+  separate cache.
+- Stored responses use Postgres `json` (not `jsonb`, which reorders keys) so replays are
+  exact.
+
+**Concurrency:**
+
+- The wallet row is locked `FOR UPDATE` before its balance is read, so concurrent changes
+  queue instead of overwriting each other. Tested with 25 simultaneous fundings with
+  distinct keys: final balance equals the exact sum. With the lock removed the same test
+  loses about 90% of the updates, which shows it really exercises the race.
+- The owner's `users` row is locked `FOR SHARE`, so a block/unblock waits for in-flight
+  money movement, and nothing that starts after a block commits can move money.
+- Multi-wallet operations lock rows in wallet-id order (one ordered query), so two
+  transfers in opposite directions cannot deadlock.
+- Amounts are validated as JSON integers (kobo); `"100"`, `10.5`, `0` and negatives are
+  rejected. There's a per-transaction cap (`MAX_TRANSACTION_AMOUNT`, default NGN 5,000,000),
+  and the database `CHECK` constraints still back everything up.
+
+**Ledger invariants**, asserted after every funding test:
+`wallet.balance = Σ credits − Σ debits`; each entry's `balance_after = balance_before ± amount`;
+and entries chain (each `balance_before` equals the previous `balance_after`).
+
+> Funding is simulated: in production the credit would come from a payment provider's
+> verified webhook, using the provider's reference as the idempotency key.
