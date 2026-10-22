@@ -51,6 +51,12 @@ All routes are under `/api/v1` and need `Authorization: Bearer <token>` unless m
 | GET | `/wallets/me` | user | Wallet and balance |
 | POST | `/wallets/fund` | user | Credit your wallet (simulated deposit). **Requires `Idempotency-Key`** |
 | POST | `/transfers` | user | Send money to a wallet (by `recipientWalletId` or `recipientEmail`). **Requires `Idempotency-Key`** |
+| GET | `/transactions?page=&limit=` | user | Your statement, newest first: each line has `direction` (DEBIT/CREDIT) and `balanceAfter` |
+| GET | `/transactions/:reference` | user | One of your transactions (404 if your wallet wasn't part of it) |
+| GET | `/admin/users?page=&limit=&email=` | admin | List users, optionally by exact email |
+| GET | `/admin/users/:id` | admin | User, wallet and block/unblock history |
+| PATCH | `/admin/users/:id/block` | admin | Block an account (`reason` required) |
+| PATCH | `/admin/users/:id/unblock` | admin | Restore an account (`reason` required) |
 | POST | `/admin/blacklist` | admin | Blacklist an email, phone or BVN (stored normalised; `reason` required) |
 | GET | `/admin/blacklist?page=&limit=` | admin | List entries, newest first |
 | DELETE | `/admin/blacklist/:id` | admin | Remove an entry so the identity can sign up again |
@@ -206,6 +212,29 @@ Proven under load in the e2e suite:
 `wallet.balance = Σ credits − Σ debits`; each entry's `balance_after = balance_before ± amount`;
 entries chain (each `balance_before` equals the previous `balance_after`); and **money is
 conserved**: the sum of all balances equals the total ever funded.
+
+### Blocking accounts
+
+- `PATCH /admin/users/:id/block` and `/unblock` require a `reason`. Each change writes an
+  `account_status_events` row with the acting admin, **in the same transaction** as the
+  status change. Repeating the same action is a `409` and writes no duplicate audit row.
+  Admins can't block themselves.
+- **A block takes effect everywhere, immediately:** no login, existing tokens rejected
+  (the auth guard re-reads the user on every request), no sending or funding (`403`), and
+  no receiving (a sender gets `422 Recipient account cannot receive transfers`).
+- **Race-safe:** the block locks the user row `FOR UPDATE`, while money movement holds
+  `FOR SHARE` on it. So a block waits for in-flight transfers to finish, and any transfer
+  that starts after it commits sees `BLOCKED`. Tested by firing a block alongside 20
+  concurrent transfers: every transfer either completes or is refused, with no deadlocks
+  and the ledger intact.
+
+### Transaction history
+
+`GET /transactions` is built from the **ledger**, not the transactions table: one line
+per ledger entry on your wallet, joined to its transaction. Each line therefore shows the
+transaction from your side (`direction`, `balanceAfter`), like a bank statement. Someone
+else's transaction reference returns the same `404` as a non-existent one, so references
+can't be probed.
 
 > Funding is simulated: in production the credit would come from a payment provider's
 > verified webhook, using the provider's reference as the idempotency key.
